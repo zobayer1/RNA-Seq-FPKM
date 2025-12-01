@@ -1,6 +1,12 @@
 # RNA-Seq FPKM Differential Expression & Downstream Analysis Plan
 
-This plan outlines a detailed, step-by-step workflow for solving all 4 problems in the assignment using R and the dataset in `data/GSE183947_fpkm.csv`. It focuses on what needs to be studied and done, not on the final solutions.
+This plan outlines a detailed, step-by-step workflow for solving all 4 problems in the assignment using R and the datasets in the `data/` directory:
+- `GSE183947_raw_counts_GRCh38.p13_NCBI.tsv` – raw read counts for DESeq2.
+- `GSE183947_fpkm.csv` – FPKM-normalized expression for exploration/visualization.
+- `GSE183947_series_matrix.txt` – GEO series matrix with sample metadata (e.g., tumor vs normal, pairing).
+- `Human.GRCh38.p13.annot.tsv` – gene annotation for mapping Ensembl IDs to symbols and other attributes.
+
+It focuses on what needs to be studied and done, not on the final solutions.
 
 ---
 
@@ -8,8 +14,12 @@ This plan outlines a detailed, step-by-step workflow for solving all 4 problems 
 
 ### 1.1 Understand the Assignment and Data
 - Read `task.md` carefully to identify the 4 specific questions/problems and any constraints (e.g., tools, packages, or plots required).
-- Confirm that `data/GSE183947_fpkm.csv` is the main input for all questions.
-- Note that the study involves paired samples (tumor vs normal tissue from the same patients).
+- Confirm how each file in `data/` is used:
+  - `GSE183947_raw_counts_GRCh38.p13_NCBI.tsv` → primary input for DESeq2-based differential expression.
+  - `GSE183947_fpkm.csv` → normalized expression matrix used mainly for exploratory plots / QC.
+  - `GSE183947_series_matrix.txt` → sample-level metadata, including which samples are tumor vs normal and how they are paired.
+  - `Human.GRCh38.p13.annot.tsv` → mapping from gene IDs (e.g., Ensembl) to human-readable gene symbols and possibly Entrez IDs.
+- Note that the study involves paired samples (tumor vs normal tissue from the same patients) and plan to use that information in the design when possible.
 - Identify which tasks correspond to:
   - Data loading and understanding.
   - Differential expression analysis.
@@ -429,6 +439,7 @@ Use this checklist to track your progress through the plan. You can duplicate it
 - [x] Install/verify R and required packages (`tidyverse`, `DESeq2`, annotation and enrichment packages).
 - [x] Set up project structure (`scripts/`, `results/`, `figures/`).
 - [x] Review RNA-Seq, FPKM, and basic DE concepts.
+- [x] Understand the assignment requirements and download required data files.
 
 ### 8.2 Task 1 – Data Loading and Understanding
 - [ ] Load `data/GSE183947_fpkm.csv` into R.
