@@ -64,11 +64,11 @@ It focuses on what needs to be studied and done, not on the final solutions.
 
 ---
 
-## 2. Task 1 – Load and Understand the RNA-Seq FPKM Data
+## 2. Task 1 – Load and Understand the RNA-Seq Data
 
 ### 2.1 Study Needed R and Data Concepts
 - R data import and inspection:
-  - How to use `readr::read_csv()` or `data.table::fread()` to read large CSV files.
+  - How to use `readr::read_csv()`, `readr::read_tsv()`, or `data.table::fread()` to read large CSV/TSV files.
   - Functions to inspect data: `head()`, `str()`, `summary()`, `dim()`, `colnames()`, `rownames()`.
 - Data structures for expression data:
   - Wide matrix format with genes in rows and samples in columns.
@@ -76,45 +76,75 @@ It focuses on what needs to be studied and done, not on the final solutions.
 - Sample metadata (colData):
   - Understand that DE tools (e.g., DESeq2) expect a `colData` data frame with one row per sample.
   - Columns to include: sample ID, condition (tumor/normal), patient ID (for pairing), and any other covariates if required.
+- Gene annotation:
+  - Understand that a separate table (here `Human.GRCh38.p13.annot.tsv`) provides mapping from gene IDs to symbols/biotypes.
+  - Know when to apply annotation (often after DE, but basic checks can be done during data understanding).
 
-### 2.2 Inspect and Parse the CSV File
+### 2.2 Inspect and Parse the FPKM CSV File
 - Load `data/GSE183947_fpkm.csv` into R.
 - Examine structure:
   - Determine which column(s) contain gene identifiers (e.g., gene symbol, Ensembl ID).
   - Identify how sample columns are named and how many samples there are.
-  - Check if samples are paired (e.g., normal/tumor naming patterns like `patient1_normal`, `patient1_tumor`).
+  - Check if samples appear paired based on naming (e.g., normal/tumor suffixes).
 - Check data quality at a basic level:
   - Look for missing values (NA) and consider how to handle them.
   - Check for duplicated gene IDs and decide how to resolve duplicates (e.g., keep max, mean, or first occurrence).
   - Look at ranges of FPKM values and presence of zeros/near-zeros.
 
-### 2.3 Build Expression Matrix and Sample Metadata
-- Construct the expression matrix:
+### 2.3 Briefly Inspect Raw Counts TSV
+- Load `data/GSE183947_raw_counts_GRCh38.p13_NCBI.tsv` (at least a subset for inspection).
+- Examine structure:
+  - Confirm that rows correspond to the same gene identifiers used in the FPKM file.
+  - Confirm that columns correspond to samples, and compare sample names with FPKM.
+- Document intended use:
+  - Note that this file will be the primary input for DESeq2 in Task 2.
+  - Record any differences in sample naming or gene IDs relative to the FPKM file.
+
+### 2.4 Build Expression Matrix and Sample Metadata from FPKM and Series Matrix
+- Construct the expression matrix from FPKM:
   - Set row names to gene identifiers.
   - Ensure all expression columns are numeric.
   - Confirm that rows = genes and columns = samples.
+- Load sample metadata from GEO series matrix:
+  - Read `data/GSE183947_series_matrix.txt`.
+  - Extract sample IDs and relevant characteristics (e.g., tumor vs normal status, any available pairing/patient information).
 - Create sample metadata (`colData`):
-  - From sample column names, derive a `sample_id` column.
-  - Create a `condition` factor with levels `normal` and `tumor`.
-  - If possible, create `patient_id` to represent paired samples (same patient in normal and tumor).
+  - Derive a `sample_id` column matching the column names of the FPKM and counts matrices.
+  - Create a `condition` factor with levels `normal` and `tumor` based on the series matrix.
+  - If possible, create a `patient_id` to represent paired samples (same patient in normal and tumor).
 - Verify consistency:
-  - Confirm that the order of samples in `colData` matches the columns in the expression matrix.
-  - Ensure there are no mismatches between sample IDs.
+  - Confirm that the order of samples in `colData` matches the columns in the FPKM expression matrix.
+  - Check that sample IDs in the series matrix, FPKM CSV, and counts TSV are consistent or can be reconciled.
 
-### 2.4 Basic Exploratory Data Analysis (EDA)
-- Compute simple summaries:
+### 2.5 Load and Check Gene Annotation
+- Load `data/Human.GRCh38.p13.annot.tsv` into R.
+- Identify key columns:
+  - Gene ID column (e.g., Ensembl ID) expected to match IDs in FPKM/counts.
+  - Annotation fields such as gene symbol, gene name/description, and biotype.
+- Check compatibility:
+  - Verify that most gene IDs in the FPKM/counts files appear in the annotation table.
+  - Note any systematic differences in ID formats (e.g., versioned vs unversioned Ensembl IDs).
+- Plan use:
+  - Decide which annotation columns will be merged into DE results later (e.g., gene symbol, biotype).
+  - Document that full annotation merging will occur in Task 2/Task 4, while Task 1 focuses on understanding and basic checks.
+
+### 2.6 Basic Exploratory Data Analysis (EDA)
+- Compute simple summaries using the FPKM expression matrix:
   - Number of genes and samples.
   - Distribution of FPKM values for a few random samples.
 - Optional quick visualizations for understanding:
   - Boxplots of log-transformed FPKM per sample to assess overall distribution.
   - Sample-sample correlation heatmap or PCA plot for global patterns (e.g., do tumors cluster separately from normals?).
-- Document initial observations and any issues (e.g., outlier samples, strange distributions).
+- Cross-check metadata:
+  - Summarize the number of `normal` vs `tumor` samples.
+  - If `patient_id` is available, verify that each patient has both a normal and a tumor sample.
 
-### 2.5 Document Assumptions and Limitations
+### 2.7 Document Assumptions and Limitations
 - Clearly note:
-  - The nature of the data (FPKM, not raw counts).
-  - Any preprocessing steps applied (filtering low-expression genes, handling missing values).
-  - Any assumptions about pairing inferred from sample names or metadata.
+  - The nature of the data (FPKM vs raw counts) and that DESeq2 will use raw counts from the TSV file in Task 2.
+  - Any preprocessing steps applied at this stage (filtering low-expression genes, handling missing values, resolving duplicate IDs).
+  - Any assumptions about pairing inferred from sample names or metadata in the series matrix.
+  - Any ID-format issues discovered between expression files and annotation and how you plan to handle them.
 
 ---
 
@@ -442,44 +472,50 @@ Use this checklist to track your progress through the plan. You can duplicate it
 - [x] Understand the assignment requirements and download required data files.
 
 ### 8.2 Task 1 – Data Loading and Understanding
-- [ ] Load `data/GSE183947_fpkm.csv` into R.
-- [ ] Identify gene ID column(s) and sample columns.
-- [ ] Construct expression matrix (genes in rows, samples in columns).
-- [ ] Build `colData` with `sample_id`, `condition` (tumor/normal), and `patient_id` (if possible).
-- [ ] Perform basic EDA (summaries, distributions, optional QC plots).
-- [ ] Document assumptions (e.g., how pairing was inferred, handling of missing values, low-expression filtering).
+- [x] Load `data/GSE183947_fpkm.csv` into R and inspect its structure.
+- [x] Load `data/GSE183947_raw_counts_GRCh38.p13_NCBI.tsv` and inspect its structure.
+- [x] Load `data/GSE183947_series_matrix.txt` and extract sample metadata (tumor/normal status, pairing if available).
+- [x] Load `data/Human.GRCh38.p13.annot.tsv` and verify gene ID compatibility with expression data.
+- [x] Construct FPKM-based expression matrix (genes in rows, samples in columns) and corresponding `colData` (`sample_id`, `condition`, `patient_id` if possible).
+- [x] Perform basic EDA (summaries, distributions, optional QC plots) using FPKM expression and sample metadata.
+- [x] Document assumptions (e.g., how pairing was inferred, handling of missing values, low-expression filtering, ID mapping decisions).
 
-### 8.3 Task 2 – Differential Expression Analysis
-- [ ] Decide on design formula (`~ condition` vs `~ patient_id + condition`).
-- [ ] Filter genes with extremely low expression (if applying filtering).
-- [ ] Construct DE dataset (e.g., `DESeqDataSetFromMatrix`).
-- [ ] Run DE pipeline (e.g., `DESeq()` and `results()`).
-- [ ] Apply FDR and log2FC thresholds to define significant genes.
-- [ ] Annotate genes with symbols/descriptions (if needed).
-- [ ] Save full and filtered DE results to `results/`.
-- [ ] Perform quality checks (p-value histogram, counts of DE genes).
+### 8.3 Task 2 – Differential Gene Expression Analysis
+- [ ] Decide on the statistical design for DE (unpaired `~ condition` vs paired `~ patient_id + condition`) based on metadata.
+- [ ] Load the full raw counts matrix from `data/GSE183947_raw_counts_GRCh38.p13_NCBI.tsv` into R.
+- [ ] Ensure raw counts columns align with `colData$sample_id` (same samples, same order) and reconcile any naming differences.
+- [ ] Filter out genes with extremely low counts across all samples (e.g., near-zero expression) according to a chosen rule.
+- [ ] Construct a `DESeqDataSet` (or chosen DE object) using the raw counts matrix and `colData`, with the selected design formula.
+- [ ] Run the DE pipeline (e.g., `DESeq()`), obtain results for tumor vs normal, and summarize the number of up- and down-regulated genes at selected thresholds.
+- [ ] Apply significance and log2 fold-change cutoffs and add a `regulation` label (up/down/not_significant) to the results.
+- [ ] Annotate DE results with gene-level information from `Human.GRCh38.p13.annot.tsv` (e.g., gene symbols, biotypes).
+- [ ] Export complete and filtered DE results tables to `results/` for later visualization and downstream analysis.
+- [ ] Document key analysis choices (design formula, thresholds, filtering criteria) and any notable QC observations from the DE step.
 
-### 8.4 Task 3 – Visualization (Volcano & MA Plots)
-- [ ] Prepare DE results with columns needed for plotting (`log2FoldChange`, `padj`/`pvalue`, `baseMean` or mean expression, `regulation`).
-- [ ] Create volcano plot with thresholds and color-coding.
-- [ ] Create MA plot (DESeq2 `plotMA()` and/or custom `ggplot2` plot).
-- [ ] Optionally label top DE genes on the volcano plot.
-- [ ] Save plots to `figures/` with clear filenames.
+### 8.4 Task 3 – Visualization: Volcano Plot and MA Plot
+- [ ] From the DE results table, derive plotting variables (log2FC, p-values/FDR, baseMean/mean expression, `regulation` labels).
+- [ ] Implement a volcano plot (using `ggplot2` or equivalent) with log2FC on the x-axis and -log10(p or padj) on the y-axis, coloring points by `regulation`.
+- [ ] Add threshold reference lines to the volcano plot (log2FC cutoffs and p-value/FDR cutoff) and optionally highlight/label top genes.
+- [ ] Implement an MA plot (either via DESeq2 `plotMA()` or a custom `ggplot2` version) showing mean expression vs log2FC, colored by `regulation`.
+- [ ] Save the volcano and MA plots to `figures/` with clear filenames and sufficient resolution for inclusion in the report.
+- [ ] Write brief interpretations of what the volcano and MA plots show about the overall DE pattern (for use in the Results/Discussion sections).
 
-### 8.5 Task 4 – Downstream Enrichment / Pathway Analysis
-- [ ] Select thresholds and create lists of up- and down-regulated genes.
-- [ ] Create a ranked gene list if performing GSEA.
-- [ ] Map gene IDs to the required ID type for tools (e.g., Entrez IDs, gene symbols).
-- [ ] Choose enrichment approach (web-based tool vs R packages) and gene set databases.
-- [ ] Run enrichment analysis for up-regulated genes.
-- [ ] Run enrichment analysis for down-regulated genes.
-- [ ] (If GSEA) Run GSEA and collect top enriched pathways.
-- [ ] Visualize enrichment results (bar/dot plots, etc.).
-- [ ] Summarize main biological themes from enriched terms/pathways.
+### 8.5 Task 4 – Downstream Functional and Pathway Analysis
+- [ ] Define gene lists for enrichment: significantly up-regulated and down-regulated genes based on chosen thresholds.
+- [ ] Optionally create a ranked gene list (e.g., by log2FC or a signed statistic) if performing GSEA-type analyses.
+- [ ] Map DE gene identifiers to the ID type required by chosen enrichment tools (e.g., Entrez ID or gene symbols) using `Human.GRCh38.p13.annot.tsv` and/or `org.Hs.eg.db`.
+- [ ] Choose one or more enrichment tools/workflows (e.g., clusterProfiler, DAVID, Enrichr, or web-based GO/KEGG portals) and configure parameters (background universe, databases, cutoffs).
+- [ ] Run enrichment analyses separately for up-regulated and down-regulated genes (and optionally GSEA on a ranked list).
+- [ ] Summarize top enriched GO terms and pathways (e.g., KEGG, Reactome) with their p-values/FDR and gene counts.
+- [ ] Create at least one visualization of enrichment results (e.g., bar plot or dot plot of top terms/pathways) and save to `figures/`.
+- [ ] Interpret major biological themes emerging from enrichment (e.g., cell cycle, immune response, metabolism) and relate them to tumor vs normal biology.
+- [ ] Document enrichment settings (databases, thresholds, background) and limitations (e.g., incomplete mapping, redundancy of GO terms).
 
-### 8.6 Report Writing and Final Checks
-- [ ] Draft report sections: Introduction, Materials and Methods, Results, Discussion, Conclusion.
-- [ ] Integrate outputs from Tasks 1–4 into the appropriate report sections (tables and figures with captions).
-- [ ] Add and format references for methods, tools, dataset, and biological background.
-- [ ] Perform final consistency check (numbers, plots, and text agree; all assignment questions are addressed).
-- [ ] Export final report in the required format (e.g., PDF, Word, or HTML).
+### 8.6 Task 5 – Summary and Report Organization
+- [ ] Draft a structured outline for the final report organized by the four main tasks (data loading, DE, visualization, enrichment), following the suggested 5-section format.
+- [ ] For each task, list the specific figures, tables, and key numerical results that must appear in the report (with tentative figure/table labels).
+- [ ] Collect and record the main conclusions from each task (e.g., number of DE genes, key pathways, QC findings) in concise bullet points.
+- [ ] Ensure that all important analysis choices (design formula, thresholds, filters, tools used) are noted for inclusion in the Materials and Methods section.
+- [ ] Identify any caveats or limitations (e.g., FPKM vs counts, sample size, unmodeled covariates) that should be discussed explicitly.
+- [ ] Compile a preliminary list of references to cite (dataset publication, DESeq2, enrichment tools, key biological background papers).
+- [ ] Verify that all assignment questions are explicitly answered by mapping each question to the corresponding results, figures, and discussion points in the report outline.

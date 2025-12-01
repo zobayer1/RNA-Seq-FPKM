@@ -31,39 +31,310 @@ suppressPackageStartupMessages({
 
 # 1 Introduction
 
-This document implements the analysis plan for the CSE763 Advanced Bioinformatics assignment using the RNA-Seq FPKM dataset in `data/GSE183947_fpkm.csv`.
+This document implements the analysis plan for the CSE763 Advanced Bioinformatics assignment using RNA-Seq data from the GEO dataset GSE183947. The project combines FPKM-normalized expression values (for data understanding and visualization) with raw read counts, sample metadata, and gene annotation for differential expression and downstream analyses.
 
 The main objectives are:
 
-- Load and understand the FPKM expression data.
-- Perform differential expression analysis between tumor and normal samples.
+- Load and understand the FPKM expression data and associated sample/gene information.
+- Perform differential expression analysis between tumor and normal samples using raw counts.
 - Visualize results (volcano and MA plots).
-- Conduct downstream functional/pathway analysis.
+- Conduct downstream functional/pathway analysis based on the differentially expressed genes.
 
 # 2 Data Loading and Understanding (Task 1)
 
 ## 2.1 Load FPKM Data
 
 ```{r load-data}
-# TODO: implement data loading according to plan.md
-# Example structure (adapt to actual file format):
-# fpkm_raw <- readr::read_csv("data/GSE183947_fpkm.csv")
-# str(fpkm_raw)
+# Load FPKM expression data
+fpkm_path <- file.path("data", "GSE183947_fpkm.csv")
+
+fpkm_raw <- readr::read_csv(fpkm_path)
+
+# Inspect basic structure
+cat("FPKM data dimensions (rows x columns):\n")
+print(dim(fpkm_raw))
+
+cat("\nFirst few columns:\n")
+print(colnames(fpkm_raw)[1:min(10, ncol(fpkm_raw))])
+
+cat("\nPreview of the data:\n")
+print(dplyr::slice_head(fpkm_raw, n = 5))
+
+# In this file:
+# - The first column contains gene identifiers (e.g., gene symbols).
+# - Remaining columns are FPKM values for individual samples (e.g., CA.* / CAP.*).
+# These FPKM values will be used for data understanding, QC, and visualization.
+# Raw counts (GSE183947_raw_counts_GRCh38.p13_NCBI.tsv) will be used later
+# in Task 2 for DESeq2-based differential expression.
 ```
 
 ## 2.2 Build Expression Matrix and Sample Metadata
 
 ```{r build-matrix-coldata}
-# TODO: derive expression matrix (genes x samples) and sample metadata (colData)
-# - Set gene IDs as rownames
-# - Identify tumor vs normal samples
-# - Create patient_id if pairing can be inferred
+# Derive expression matrix (genes x samples) and sample metadata (colData)
+
+# 1. Separate gene IDs and expression values
+# Assuming the first column is gene IDs and all remaining columns are samples
+first_gene_id_col <- colnames(fpkm_raw)[1]
+
+fpkm_long <- fpkm_raw
+
+# Extract gene IDs as a character vector
+gene_ids <- fpkm_long[[1]]
+
+# Extract expression values as a numeric matrix (genes x samples)
+expr_fpkm <- as.matrix(dplyr::select(fpkm_long, -1))
+rownames(expr_fpkm) <- gene_ids
+
+# 2. Build initial sample metadata (colData) with sample_id from FPKM columns
+sample_ids <- colnames(expr_fpkm)
+
+col_data <- tibble::tibble(
+  sample_id = sample_ids
+)
+
+# 3. Parse GEO series matrix to derive condition and patient_id
+series_path <- file.path("data", "GSE183947_series_matrix.txt")
+
+series_lines <- readr::read_lines(series_path)
+
+# Helper to extract values from a line starting with a given prefix (e.g., "!Sample_title")
+extract_sample_row <- function(lines, prefix) {
+  line <- lines[startsWith(lines, prefix)]
+  if (length(line) == 0) return(NULL)
+  # Remove the prefix and split by tab
+  line <- sub(paste0("^", prefix), "", line[1])
+  # Trim leading whitespace and split on tabs
+  parts <- strsplit(trimws(line), "\t")[[1]]
+  # Drop any empty first element (if present)
+  parts <- parts[nzchar(parts)]
+  # Remove surrounding quotes
+  parts <- gsub('^"|"$', "", parts)
+  parts
+}
+
+# Extract various sample-level fields
+sample_titles   <- extract_sample_row(series_lines, "!Sample_title")
+sample_access   <- extract_sample_row(series_lines, "!Sample_geo_accession")
+sample_descr    <- extract_sample_row(series_lines, "!Sample_description")
+
+# condition from tissue characteristics (tumor vs normal breast tissue)
+char_tissue <- series_lines[startsWith(series_lines, "!Sample_characteristics_ch1\ttissue:") |
+                            grepl("tissue: breast tumor|tissue: normal breast tissue", series_lines, fixed = TRUE)]
+if (length(char_tissue) == 0) {
+  char_tissue_vals <- NULL
+} else {
+  char_tissue_vals <- extract_sample_row(series_lines, "!Sample_characteristics_ch1")
+}
+
+# donor IDs for pairing
+char_donor_line <- series_lines[grepl("!Sample_characteristics_ch1\tdonor:", series_lines) |
+                                grepl("donor:", series_lines, fixed = TRUE)]
+if (length(char_donor_line) == 0) {
+  donor_vals <- NULL
+} else {
+  donor_vals <- extract_sample_row(series_lines, "!Sample_characteristics_ch1")
+}
+
+# The file has multiple !Sample_characteristics_ch1 lines; manually pick the right ones
+# From inspection:
+# - One line contains "tissue: breast tumor" / "tissue: normal breast tissue" (condition)
+# - Another contains "donor: <ID>" (patient pairing)
+# We'll extract them more robustly using grepl on all characteristics lines.
+char_lines <- series_lines[startsWith(series_lines, "!Sample_characteristics_ch1")]
+
+# Extract tissue-based condition
+char_tissue_line <- char_lines[grepl("tissue:", char_lines)][1]
+if (!is.na(char_tissue_line)) {
+  tissue_vals <- strsplit(sub("^!Sample_characteristics_ch1", "", char_tissue_line), "\t")[[1]]
+  tissue_vals <- tissue_vals[nzchar(tissue_vals)]
+  tissue_vals <- gsub('^"|"$', "", tissue_vals)
+} else {
+  tissue_vals <- NULL
+}
+
+# Extract donor IDs
+char_donor_line2 <- char_lines[grepl("donor:", char_lines)][1]
+if (!is.na(char_donor_line2)) {
+  donor_vals2 <- strsplit(sub("^!Sample_characteristics_ch1", "", char_donor_line2), "\t")[[1]]
+  donor_vals2 <- donor_vals2[nzchar(donor_vals2)]
+  donor_vals2 <- gsub('^"|"$', "", donor_vals2)
+} else {
+  donor_vals2 <- NULL
+}
+
+# Build a metadata table indexed by Sample_description (which matches FPKM column names)
+if (!is.null(sample_descr)) {
+  meta_df <- tibble::tibble(
+    sample_description = sample_descr
+  )
+
+  # Add condition from tissue characteristics if available
+  if (!is.null(tissue_vals) && length(tissue_vals) == nrow(meta_df)) {
+    condition_raw <- tissue_vals
+    condition <- dplyr::case_when(
+      grepl("breast tumor", condition_raw) ~ "tumor",
+      grepl("normal breast tissue", condition_raw) ~ "normal",
+      TRUE ~ NA_character_
+    )
+    meta_df$condition <- factor(condition, levels = c("normal", "tumor"))
+  }
+
+  # Add patient_id from donor characteristics if available
+  if (!is.null(donor_vals2) && length(donor_vals2) == nrow(meta_df)) {
+    donor_clean <- sub("^donor:\\s*", "", donor_vals2)
+    meta_df$patient_id <- as.character(donor_clean)
+  }
+
+  # Map from series matrix sample_description (e.g., CA.102548) to FPKM sample_id
+  # FPKM columns already use these labels, so we can join directly.
+  col_data <- col_data %>%
+    dplyr::left_join(meta_df, by = c("sample_id" = "sample_description"))
+}
+
+# Inspect enriched col_data
+cat("\nEnriched sample metadata (colData) preview:\n")
+print(col_data)
 ```
 
 ## 2.3 Exploratory Data Analysis (EDA)
 
 ```{r eda}
-# TODO: add summaries and quick visualizations (distributions, boxplots, PCA, etc.)
+# Basic EDA and QC using the FPKM expression matrix and sample metadata
+
+# 1. Summaries of expression and sample metadata
+cat("Number of genes:", nrow(expr_fpkm), "\n")
+cat("Number of samples:", ncol(expr_fpkm), "\n\n")
+
+cat("Condition breakdown (tumor vs normal):\n")
+print(table(col_data$condition, useNA = "ifany"))
+
+cat("\nNumber of samples per patient (should be ~2 for paired design):\n")
+print(table(col_data$patient_id, useNA = "ifany")[1:10])  # show first few entries
+
+# 2. Log2-transformed FPKM for visualization (add a small pseudocount to avoid log(0))
+log_expr_fpkm <- log2(expr_fpkm + 1)
+
+# 3. Per-sample distribution: boxplot of log2(FPKM+1)
+# Create a long-format data frame for ggplot
+
+set.seed(123)
+
+# To keep plots manageable, optionally sample a subset of genes for boxplots
+if (nrow(log_expr_fpkm) > 5000) {
+  gene_idx <- sample(seq_len(nrow(log_expr_fpkm)), 5000)
+} else {
+  gene_idx <- seq_len(nrow(log_expr_fpkm))
+}
+
+log_expr_subset <- log_expr_fpkm[gene_idx, , drop = FALSE]
+
+expr_long <- as.data.frame(log_expr_subset) %>%
+  tibble::rownames_to_column(var = "gene_id") %>%
+  tidyr::pivot_longer(
+    cols = -gene_id,
+    names_to = "sample_id",
+    values_to = "log2_fpkm"
+  ) %>%
+  dplyr::left_join(col_data, by = "sample_id")
+
+# Boxplot of distributions per sample, colored by condition
+
+p_box <- ggplot(expr_long, aes(x = sample_id, y = log2_fpkm, fill = condition)) +
+  geom_boxplot(outlier.size = 0.2, lwd = 0.2) +
+  theme_bw(base_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    legend.position = "bottom"
+  ) +
+  labs(
+    title = "Per-sample distribution of log2(FPKM + 1)",
+    x = "Sample",
+    y = "log2(FPKM + 1)"
+  )
+
+print(p_box)
+
+# 4. PCA on log2(FPKM+1) (gene-centered) to visualise global sample structure
+
+# Remove genes with zero variance across samples
+var_genes <- apply(log_expr_fpkm, 1, var, na.rm = TRUE)
+log_expr_pca <- log_expr_fpkm[var_genes > 0, , drop = FALSE]
+
+# Transpose to samples x genes for PCA
+pca_res <- prcomp(t(log_expr_pca), scale. = TRUE)
+
+pca_df <- as.data.frame(pca_res$x[, 1:2]) %>%
+  dplyr::mutate(sample_id = rownames(pca_res$x)) %>%
+  dplyr::left_join(col_data, by = "sample_id")
+
+var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2)
+
+p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, color = condition, label = sample_id)) +
+  geom_point(size = 2) +
+  theme_bw() +
+  labs(
+    title = "PCA of samples based on log2(FPKM + 1)",
+    x = paste0("PC1 (", round(var_explained[1] * 100, 1), "% var)"),
+    y = paste0("PC2 (", round(var_explained[2] * 100, 1), "% var)")
+  )
+
+print(p_pca)
+
+# NOTE for the report:
+# - Use the condition breakdown and PCA to comment on whether tumor and normal
+#   samples separate in expression space.
+# - Boxplots can be used to identify potential outlier samples or large
+#   distributional shifts between groups.
+```
+
+## 2.4 Raw Counts Data Structure (Preview for DESeq2)
+
+```{r inspect-raw-counts}
+# Inspect the structure of the raw counts file that will be used for DESeq2
+counts_path <- file.path("data", "GSE183947_raw_counts_GRCh38.p13_NCBI.tsv")
+
+# Read only the first few rows for a quick structural check to avoid loading a huge matrix into memory
+raw_counts_head <- readr::read_tsv(counts_path, n_max = 5, show_col_types = FALSE)
+
+cat("Raw counts (preview) dimensions (rows x columns):\n")
+print(dim(raw_counts_head))
+
+cat("\nFirst few column names in raw counts file:\n")
+print(colnames(raw_counts_head)[1:min(10, ncol(raw_counts_head))])
+
+cat("\nPreview of raw counts (first 5 rows):\n")
+print(raw_counts_head)
+
+# NOTE for the report:
+# - Confirm that the first column contains gene IDs (likely Ensembl IDs or symbols).
+# - Confirm that remaining columns correspond to samples and that their names
+#   can be reconciled with FPKM/col_data sample_id.
+# - The full raw counts matrix will be loaded and used in Task 2 for DESeq2.
+```
+
+## 2.5 Gene Annotation Data Structure
+
+```{r inspect-annotation}
+# Inspect the structure of the gene annotation file used for mapping IDs to symbols/biotypes
+annot_path <- file.path("data", "Human.GRCh38.p13.annot.tsv")
+
+annot_head <- readr::read_tsv(annot_path, n_max = 5, show_col_types = FALSE)
+
+cat("Annotation (preview) dimensions (rows x columns):\n")
+print(dim(annot_head))
+
+cat("\nFirst few column names in annotation file:\n")
+print(colnames(annot_head))
+
+cat("\nPreview of annotation (first 5 rows):\n")
+print(annot_head)
+
+# NOTE for the report:
+# - Identify which column corresponds to the primary gene identifier used in
+#   the counts/FPKM files (e.g., Ensembl ID, gene symbol).
+# - Identify useful annotation columns (e.g., gene symbol, gene name, biotype).
+# - Detailed annotation merging will be done later when interpreting DE results.
 ```
 
 # 3 Differential Expression Analysis (Task 2)

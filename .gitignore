@@ -35,6 +35,7 @@ man/
 *.knit.md
 *.Rmd.nb.html
 *.nb.html
+analysis.html
 
 # Compiled objects
 *.o
