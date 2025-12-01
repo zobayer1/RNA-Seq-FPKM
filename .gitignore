@@ -1,0 +1,68 @@
+# R project standard .gitignore
+
+# R history and data
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+
+# RStudio project files
+.Rproj.user/
+*.Rproj
+
+# Session data, caches, logs
+.Rcheck/
+.Rcache/
+.Rproj.user
+.Rproj.user/*
+
+# Packrat / renv
+packrat/
+packrat/lib*/
+packrat/src/
+
+# Targets / drake / pipeline caches
+_targets/
+.drake/
+
+# Generated documentation
+man/
+# If using roxygen2 with pkgdown, you may choose to ignore these only if generated
+# docs/, inst/doc/
+
+# Reports and knitted documents
+*.utf8.md
+*.knit.md
+*.Rmd.nb.html
+*.nb.html
+
+# Compiled objects
+*.o
+*.so
+*.dll
+
+# Logs and temporary files
+*.log
+*.tmp
+*~
+*.swp
+*.swo
+.DS_Store
+
+# Output folders (common conventions)
+results/
+figures/
+data/
+
+# User-specific or OS-specific files
+Thumbs.db
+.idea/
+.vscode/
+
+# Python/reticulate side-effects (if any)
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Misc
+.Rbuildignore

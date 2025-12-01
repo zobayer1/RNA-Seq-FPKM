@@ -1,0 +1,151 @@
+---
+title: "CSE763 Advanced Bioinformatics Assignment Q3 – RNA-Seq FPKM Analysis"
+author: "Zobayer Hasan"
+email: "md.zobayer.hasan@g.bracu.ac.bd"
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Load core libraries (add more as needed during analysis)
+suppressPackageStartupMessages({
+  library(tidyverse)
+  # library(DESeq2)        # uncomment when you start DE analysis
+  # library(AnnotationDbi) # uncomment and load relevant org.* package when needed
+})
+
+# Set a project root if you like; here we assume working directory is project root
+# setwd("/home/zobayer/Projects/personal/cse763/q3")
+```
+
+# 1 Introduction
+
+This document implements the analysis plan for the CSE763 Advanced Bioinformatics assignment using the RNA-Seq FPKM dataset in `data/GSE183947_fpkm.csv`.
+
+The main objectives are:
+
+- Load and understand the FPKM expression data.
+- Perform differential expression analysis between tumor and normal samples.
+- Visualize results (volcano and MA plots).
+- Conduct downstream functional/pathway analysis.
+
+# 2 Data Loading and Understanding (Task 1)
+
+## 2.1 Load FPKM Data
+
+```{r load-data}
+# TODO: implement data loading according to plan.md
+# Example structure (adapt to actual file format):
+# fpkm_raw <- readr::read_csv("data/GSE183947_fpkm.csv")
+# str(fpkm_raw)
+```
+
+## 2.2 Build Expression Matrix and Sample Metadata
+
+```{r build-matrix-coldata}
+# TODO: derive expression matrix (genes x samples) and sample metadata (colData)
+# - Set gene IDs as rownames
+# - Identify tumor vs normal samples
+# - Create patient_id if pairing can be inferred
+```
+
+## 2.3 Exploratory Data Analysis (EDA)
+
+```{r eda}
+# TODO: add summaries and quick visualizations (distributions, boxplots, PCA, etc.)
+```
+
+# 3 Differential Expression Analysis (Task 2)
+
+## 3.1 Design and DE Setup
+
+```{r de-setup}
+# TODO: choose design formula (~ condition or ~ patient_id + condition)
+# TODO: construct DESeq2 dataset (if using DESeq2) and apply any gene filtering
+# library(DESeq2)
+# dds <- DESeqDataSetFromMatrix(countData = expr_matrix, colData = col_data, design = ~ condition)
+```
+
+## 3.2 Run DE and Extract Results
+
+```{r run-de}
+# TODO: run DESeq() or chosen method and extract results
+# dds <- DESeq(dds)
+# res <- results(dds, contrast = c("condition", "tumor", "normal"))
+# summary(res)
+```
+
+## 3.3 Post-processing and Annotation
+
+```{r de-postprocess}
+# TODO: apply padj and log2FC thresholds, label up/down/NS genes
+# TODO: optionally annotate genes with symbols/descriptions
+```
+
+# 4 Visualization – Volcano and MA Plots (Task 3)
+
+## 4.1 Volcano Plot
+
+```{r volcano-plot}
+# TODO: build volcano plot from DE results using ggplot2
+# - x-axis: log2FoldChange
+# - y-axis: -log10(padj or pvalue)
+# - color by regulation (up/down/NS)
+```
+
+## 4.2 MA Plot
+
+```{r ma-plot}
+# TODO: produce MA plot
+# Option 1: use plotMA(res)
+# Option 2: custom ggplot2 MA plot using baseMean vs log2FoldChange
+```
+
+# 5 Downstream Functional / Pathway Analysis (Task 4)
+
+## 5.1 Prepare Gene Lists
+
+```{r gene-lists}
+# TODO: create lists of significantly up- and down-regulated genes
+# TODO: optionally create ranked list for GSEA
+```
+
+## 5.2 Run Enrichment Analysis
+
+```{r enrichment}
+# TODO: run enrichment (e.g., via clusterProfiler, DAVID, or other tools)
+# - Define background/universe
+# - Run enrichGO/enrichKEGG/GSEA/etc.
+```
+
+## 5.3 Summarize and Visualize Enrichment
+
+```{r enrichment-visualization}
+# TODO: visualize top enriched terms/pathways (bar plots, dot plots, etc.)
+```
+
+# 6 Results Summary, Discussion, and Conclusions
+
+## 6.1 Results Summary
+
+- TODO: Summarize key quantitative results from Tasks 1–4 (DE gene counts, key plots, top pathways).
+
+## 6.2 Discussion
+
+- TODO: Interpret biological meaning of results, relate to cancer biology and literature.
+- TODO: Discuss limitations (e.g., FPKM instead of counts, sample size, assumptions in design).
+
+## 6.3 Conclusions and Future Work
+
+- TODO: Provide concise take-home messages and potential follow-up analyses.
