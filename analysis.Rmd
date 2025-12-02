@@ -21,22 +21,23 @@ knitr::opts_chunk$set(
 # Load core libraries (add more as needed during analysis)
 suppressPackageStartupMessages({
   library(tidyverse)
-  # library(DESeq2)        # uncomment when you start DE analysis
+  library(limma)
+  library(ggrepel)
   # library(AnnotationDbi) # uncomment and load relevant org.* package when needed
 })
 
 # Set a project root if you like; here we assume working directory is project root
-# setwd("/home/zobayer/Projects/personal/cse763/q3")
+print(paste("Current working directory set to:", getwd()))
 ```
 
 # 1 Introduction
 
-This document implements the analysis plan for the CSE763 Advanced Bioinformatics assignment using RNA-Seq data from the GEO dataset GSE183947. The project combines FPKM-normalized expression values (for data understanding and visualization) with raw read counts, sample metadata, and gene annotation for differential expression and downstream analyses.
+This document implements the analysis plan for the CSE763 Advanced Bioinformatics assignment using RNA-Seq data from the GEO dataset GSE183947. The project uses FPKM-normalized expression values as the primary quantitative input (for data understanding, visualization, and FPKM-based differential expression), together with sample metadata and gene annotation. Although some raw read-count information exists for this dataset, it does not form a single, complete counts matrix covering all tumor and normal samples, and therefore is not used for the main differential expression analysis.
 
 The main objectives are:
 
 - Load and understand the FPKM expression data and associated sample/gene information.
-- Perform differential expression analysis between tumor and normal samples using raw counts.
+- Perform differential expression analysis between tumor and normal samples using a limma-based model on log2(FPKM+1), noting limitations due to the absence of a complete raw counts matrix.
 - Visualize results (volcano and MA plots).
 - Conduct downstream functional/pathway analysis based on the differentially expressed genes.
 
@@ -45,12 +46,16 @@ The main objectives are:
 ## 2.1 Load FPKM Data
 
 ```{r load-data}
-# Load FPKM expression data
 fpkm_path <- file.path("data", "GSE183947_fpkm.csv")
 
-fpkm_raw <- readr::read_csv(fpkm_path)
+# Read FPKM file; first column has no header, so readr names it ...1 by default
+fpkm_raw <- readr::read_csv(fpkm_path, show_col_types = FALSE)
 
-# Inspect basic structure
+# Rename the unnamed first column to match the annotation ID column
+if (colnames(fpkm_raw)[1] == "...1") {
+  colnames(fpkm_raw)[1] <- "Symbol"
+}
+
 cat("FPKM data dimensions (rows x columns):\n")
 print(dim(fpkm_raw))
 
@@ -59,66 +64,41 @@ print(colnames(fpkm_raw)[1:min(10, ncol(fpkm_raw))])
 
 cat("\nPreview of the data:\n")
 print(dplyr::slice_head(fpkm_raw, n = 5))
-
-# In this file:
-# - The first column contains gene identifiers (e.g., gene symbols).
-# - Remaining columns are FPKM values for individual samples (e.g., CA.* / CAP.*).
-# These FPKM values will be used for data understanding, QC, and visualization.
-# Raw counts (GSE183947_raw_counts_GRCh38.p13_NCBI.tsv) will be used later
-# in Task 2 for DESeq2-based differential expression.
 ```
 
 ## 2.2 Build Expression Matrix and Sample Metadata
 
 ```{r build-matrix-coldata}
-# Derive expression matrix (genes x samples) and sample metadata (colData)
-
-# 1. Separate gene IDs and expression values
-# Assuming the first column is gene IDs and all remaining columns are samples
+# Build expression matrix and colData
 first_gene_id_col <- colnames(fpkm_raw)[1]
 
 fpkm_long <- fpkm_raw
-
-# Extract gene IDs as a character vector
 gene_ids <- fpkm_long[[1]]
-
-# Extract expression values as a numeric matrix (genes x samples)
 expr_fpkm <- as.matrix(dplyr::select(fpkm_long, -1))
 rownames(expr_fpkm) <- gene_ids
 
-# 2. Build initial sample metadata (colData) with sample_id from FPKM columns
 sample_ids <- colnames(expr_fpkm)
 
 col_data <- tibble::tibble(
   sample_id = sample_ids
 )
 
-# 3. Parse GEO series matrix to derive condition and patient_id
 series_path <- file.path("data", "GSE183947_series_matrix.txt")
-
 series_lines <- readr::read_lines(series_path)
 
-# Helper to extract values from a line starting with a given prefix (e.g., "!Sample_title")
 extract_sample_row <- function(lines, prefix) {
   line <- lines[startsWith(lines, prefix)]
   if (length(line) == 0) return(NULL)
-  # Remove the prefix and split by tab
   line <- sub(paste0("^", prefix), "", line[1])
-  # Trim leading whitespace and split on tabs
   parts <- strsplit(trimws(line), "\t")[[1]]
-  # Drop any empty first element (if present)
   parts <- parts[nzchar(parts)]
-  # Remove surrounding quotes
   parts <- gsub('^"|"$', "", parts)
-  parts
 }
 
-# Extract various sample-level fields
 sample_titles   <- extract_sample_row(series_lines, "!Sample_title")
 sample_access   <- extract_sample_row(series_lines, "!Sample_geo_accession")
 sample_descr    <- extract_sample_row(series_lines, "!Sample_description")
 
-# condition from tissue characteristics (tumor vs normal breast tissue)
 char_tissue <- series_lines[startsWith(series_lines, "!Sample_characteristics_ch1\ttissue:") |
                             grepl("tissue: breast tumor|tissue: normal breast tissue", series_lines, fixed = TRUE)]
 if (length(char_tissue) == 0) {
@@ -127,7 +107,6 @@ if (length(char_tissue) == 0) {
   char_tissue_vals <- extract_sample_row(series_lines, "!Sample_characteristics_ch1")
 }
 
-# donor IDs for pairing
 char_donor_line <- series_lines[grepl("!Sample_characteristics_ch1\tdonor:", series_lines) |
                                 grepl("donor:", series_lines, fixed = TRUE)]
 if (length(char_donor_line) == 0) {
@@ -136,14 +115,8 @@ if (length(char_donor_line) == 0) {
   donor_vals <- extract_sample_row(series_lines, "!Sample_characteristics_ch1")
 }
 
-# The file has multiple !Sample_characteristics_ch1 lines; manually pick the right ones
-# From inspection:
-# - One line contains "tissue: breast tumor" / "tissue: normal breast tissue" (condition)
-# - Another contains "donor: <ID>" (patient pairing)
-# We'll extract them more robustly using grepl on all characteristics lines.
 char_lines <- series_lines[startsWith(series_lines, "!Sample_characteristics_ch1")]
 
-# Extract tissue-based condition
 char_tissue_line <- char_lines[grepl("tissue:", char_lines)][1]
 if (!is.na(char_tissue_line)) {
   tissue_vals <- strsplit(sub("^!Sample_characteristics_ch1", "", char_tissue_line), "\t")[[1]]
@@ -153,7 +126,6 @@ if (!is.na(char_tissue_line)) {
   tissue_vals <- NULL
 }
 
-# Extract donor IDs
 char_donor_line2 <- char_lines[grepl("donor:", char_lines)][1]
 if (!is.na(char_donor_line2)) {
   donor_vals2 <- strsplit(sub("^!Sample_characteristics_ch1", "", char_donor_line2), "\t")[[1]]
@@ -163,13 +135,11 @@ if (!is.na(char_donor_line2)) {
   donor_vals2 <- NULL
 }
 
-# Build a metadata table indexed by Sample_description (which matches FPKM column names)
 if (!is.null(sample_descr)) {
   meta_df <- tibble::tibble(
     sample_description = sample_descr
   )
 
-  # Add condition from tissue characteristics if available
   if (!is.null(tissue_vals) && length(tissue_vals) == nrow(meta_df)) {
     condition_raw <- tissue_vals
     condition <- dplyr::case_when(
@@ -180,19 +150,15 @@ if (!is.null(sample_descr)) {
     meta_df$condition <- factor(condition, levels = c("normal", "tumor"))
   }
 
-  # Add patient_id from donor characteristics if available
   if (!is.null(donor_vals2) && length(donor_vals2) == nrow(meta_df)) {
     donor_clean <- sub("^donor:\\s*", "", donor_vals2)
     meta_df$patient_id <- as.character(donor_clean)
   }
 
-  # Map from series matrix sample_description (e.g., CA.102548) to FPKM sample_id
-  # FPKM columns already use these labels, so we can join directly.
   col_data <- col_data %>%
     dplyr::left_join(meta_df, by = c("sample_id" = "sample_description"))
 }
 
-# Inspect enriched col_data
 cat("\nEnriched sample metadata (colData) preview:\n")
 print(col_data)
 ```
@@ -200,27 +166,19 @@ print(col_data)
 ## 2.3 Exploratory Data Analysis (EDA)
 
 ```{r eda}
-# Basic EDA and QC using the FPKM expression matrix and sample metadata
-
-# 1. Summaries of expression and sample metadata
 cat("Number of genes:", nrow(expr_fpkm), "\n")
 cat("Number of samples:", ncol(expr_fpkm), "\n\n")
 
 cat("Condition breakdown (tumor vs normal):\n")
 print(table(col_data$condition, useNA = "ifany"))
 
-cat("\nNumber of samples per patient (should be ~2 for paired design):\n")
-print(table(col_data$patient_id, useNA = "ifany")[1:10])  # show first few entries
+cat("\nNumber of samples per patient (first few):\n")
+print(table(col_data$patient_id, useNA = "ifany")[1:10])
 
-# 2. Log2-transformed FPKM for visualization (add a small pseudocount to avoid log(0))
 log_expr_fpkm <- log2(expr_fpkm + 1)
-
-# 3. Per-sample distribution: boxplot of log2(FPKM+1)
-# Create a long-format data frame for ggplot
 
 set.seed(123)
 
-# To keep plots manageable, optionally sample a subset of genes for boxplots
 if (nrow(log_expr_fpkm) > 5000) {
   gene_idx <- sample(seq_len(nrow(log_expr_fpkm)), 5000)
 } else {
@@ -238,8 +196,6 @@ expr_long <- as.data.frame(log_expr_subset) %>%
   ) %>%
   dplyr::left_join(col_data, by = "sample_id")
 
-# Boxplot of distributions per sample, colored by condition
-
 p_box <- ggplot(expr_long, aes(x = sample_id, y = log2_fpkm, fill = condition)) +
   geom_boxplot(outlier.size = 0.2, lwd = 0.2) +
   theme_bw(base_size = 8) +
@@ -255,13 +211,20 @@ p_box <- ggplot(expr_long, aes(x = sample_id, y = log2_fpkm, fill = condition)) 
 
 print(p_box)
 
-# 4. PCA on log2(FPKM+1) (gene-centered) to visualise global sample structure
+# Save EDA boxplot to figures/
+if (!dir.exists("figures")) dir.create("figures", recursive = TRUE)
 
-# Remove genes with zero variance across samples
+ggplot2::ggsave(
+  filename = file.path("figures", "eda_boxplot_log2fpkm_by_sample.png"),
+  plot = p_box,
+  width = 8,
+  height = 4,
+  dpi = 300
+)
+
 var_genes <- apply(log_expr_fpkm, 1, var, na.rm = TRUE)
 log_expr_pca <- log_expr_fpkm[var_genes > 0, , drop = FALSE]
 
-# Transpose to samples x genes for PCA
 pca_res <- prcomp(t(log_expr_pca), scale. = TRUE)
 
 pca_df <- as.data.frame(pca_res$x[, 1:2]) %>%
@@ -270,7 +233,7 @@ pca_df <- as.data.frame(pca_res$x[, 1:2]) %>%
 
 var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2)
 
-p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, color = condition, label = sample_id)) +
+p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, color = condition)) +
   geom_point(size = 2) +
   theme_bw() +
   labs(
@@ -281,42 +244,19 @@ p_pca <- ggplot(pca_df, aes(x = PC1, y = PC2, color = condition, label = sample_
 
 print(p_pca)
 
-# NOTE for the report:
-# - Use the condition breakdown and PCA to comment on whether tumor and normal
-#   samples separate in expression space.
-# - Boxplots can be used to identify potential outlier samples or large
-#   distributional shifts between groups.
+# Save PCA plot to figures/
+ggplot2::ggsave(
+  filename = file.path("figures", "eda_pca_log2fpkm_samples.png"),
+  plot = p_pca,
+  width = 6,
+  height = 5,
+  dpi = 300
+)
 ```
 
-## 2.4 Raw Counts Data Structure (Preview for DESeq2)
-
-```{r inspect-raw-counts}
-# Inspect the structure of the raw counts file that will be used for DESeq2
-counts_path <- file.path("data", "GSE183947_raw_counts_GRCh38.p13_NCBI.tsv")
-
-# Read only the first few rows for a quick structural check to avoid loading a huge matrix into memory
-raw_counts_head <- readr::read_tsv(counts_path, n_max = 5, show_col_types = FALSE)
-
-cat("Raw counts (preview) dimensions (rows x columns):\n")
-print(dim(raw_counts_head))
-
-cat("\nFirst few column names in raw counts file:\n")
-print(colnames(raw_counts_head)[1:min(10, ncol(raw_counts_head))])
-
-cat("\nPreview of raw counts (first 5 rows):\n")
-print(raw_counts_head)
-
-# NOTE for the report:
-# - Confirm that the first column contains gene IDs (likely Ensembl IDs or symbols).
-# - Confirm that remaining columns correspond to samples and that their names
-#   can be reconciled with FPKM/col_data sample_id.
-# - The full raw counts matrix will be loaded and used in Task 2 for DESeq2.
-```
-
-## 2.5 Gene Annotation Data Structure
+## 2.4 Gene Annotation Data Structure
 
 ```{r inspect-annotation}
-# Inspect the structure of the gene annotation file used for mapping IDs to symbols/biotypes
 annot_path <- file.path("data", "Human.GRCh38.p13.annot.tsv")
 
 annot_head <- readr::read_tsv(annot_path, n_max = 5, show_col_types = FALSE)
@@ -330,57 +270,315 @@ print(colnames(annot_head))
 cat("\nPreview of annotation (first 5 rows):\n")
 print(annot_head)
 
-# NOTE for the report:
-# - Identify which column corresponds to the primary gene identifier used in
-#   the counts/FPKM files (e.g., Ensembl ID, gene symbol).
-# - Identify useful annotation columns (e.g., gene symbol, gene name, biotype).
-# - Detailed annotation merging will be done later when interpreting DE results.
+if (!"Symbol" %in% colnames(annot_head)) {
+  stop("Expected a 'Symbol' column in Human.GRCh38.p13.annot.tsv but did not find one.")
+}
+
+annot_full <- readr::read_tsv(annot_path, show_col_types = FALSE)
+
+symbol_ids <- annot_full[["Symbol"]]
+
+if ("Synonyms" %in% colnames(annot_full)) {
+  synonyms_raw <- annot_full[["Synonyms"]]
+  synonyms_tokens <- strsplit(ifelse(is.na(synonyms_raw), "", synonyms_raw), "[;,|]")
+  synonyms_tokens <- lapply(synonyms_tokens, function(x) trimws(x[nzchar(x)]))
+} else {
+  synonyms_tokens <- vector("list", length = nrow(annot_full))
+}
+
+fpkm_gene_ids <- rownames(expr_fpkm)
+
+match_by_symbol <- fpkm_gene_ids %in% symbol_ids
+
+match_by_synonym <- logical(length(fpkm_gene_ids))
+if (length(synonyms_tokens) > 0) {
+  all_synonyms <- unique(unlist(synonyms_tokens))
+  all_synonyms <- all_synonyms[nzchar(all_synonyms)]
+  synonym_set <- unique(all_synonyms)
+  match_by_synonym[!match_by_symbol] <- fpkm_gene_ids[!match_by_symbol] %in% synonym_set
+}
+
+annot_matches_any <- match_by_symbol | match_by_synonym
+
+cat("\nNumber of FPKM genes:", length(fpkm_gene_ids), "\n")
+cat("Number of FPKM genes found by Symbol:", sum(match_by_symbol), "\n")
+cat("Number of additional FPKM genes found only via Synonyms:",
+    sum(match_by_synonym & !match_by_symbol), "\n")
+cat("Total number of FPKM genes with annotation (Symbol or Synonyms):",
+    sum(annot_matches_any), "\n")
+cat("Number of FPKM genes without annotation (neither Symbol nor Synonyms):",
+    length(fpkm_gene_ids) - sum(annot_matches_any), "\n")
+cat("Proportion of FPKM genes with annotation (Symbol or Synonyms):",
+    round(sum(annot_matches_any) / length(fpkm_gene_ids), 4), "\n")
+
+missing_ids <- fpkm_gene_ids[!annot_matches_any]
+if (length(missing_ids) > 0) {
+  cat("\nExample FPKM gene IDs not found in annotation (via Symbol or Synonyms, up to 10 shown):\n")
+  print(head(missing_ids, 10))
+} else {
+  cat("\nAll FPKM gene IDs (symbols) were found in the annotation table via Symbol or Synonyms.\n")
+}
 ```
 
 # 3 Differential Expression Analysis (Task 2)
 
-## 3.1 Design and DE Setup
+## 3.1 Design and Data Preparation (FPKM + limma)
 
 ```{r de-setup}
-# TODO: choose design formula (~ condition or ~ patient_id + condition)
-# TODO: construct DESeq2 dataset (if using DESeq2) and apply any gene filtering
-# library(DESeq2)
-# dds <- DESeqDataSetFromMatrix(countData = expr_matrix, colData = col_data, design = ~ condition)
+# Set up design and filter genes for limma
+stopifnot(exists("col_data"), exists("expr_fpkm"))
+
+col_data_limma <- col_data
+
+if (!is.null(col_data_limma$condition)) {
+  col_data_limma$condition <- as.factor(col_data_limma$condition)
+  if ("normal" %in% levels(col_data_limma$condition)) {
+    col_data_limma$condition <- relevel(col_data_limma$condition, ref = "normal")
+  }
+}
+
+if (!is.null(col_data_limma$patient_id)) {
+  col_data_limma$patient_id <- as.factor(col_data_limma$patient_id)
+}
+
+cat("Condition breakdown in col_data_limma (tumor vs normal):\n")
+print(table(col_data_limma$condition, useNA = "ifany"))
+
+cat("\nSamples per patient_id (first few):\n")
+print(head(table(col_data_limma$patient_id)))
+
+log_expr_fpkm <- log2(expr_fpkm + 1)
+
+cat("\nExpression matrix dimensions for limma (genes x samples):\n")
+print(dim(log_expr_fpkm))
+
+min_log_expr <- 1
+
+keep_genes_limma <- apply(log_expr_fpkm, 1, function(x) {
+  sum(x >= min_log_expr, na.rm = TRUE) >= 2
+})
+
+cat("\nNumber of genes before filtering:", nrow(log_expr_fpkm), "\n")
+cat("Number of genes after filtering (log2(FPKM+1) >=", min_log_expr, "in >= 2 samples):",
+    sum(keep_genes_limma), "\n")
+
+log_expr_fpkm_filtered <- log_expr_fpkm[keep_genes_limma, , drop = FALSE]
+
+# Align samples between expression matrix and colData
+common_samples <- intersect(colnames(log_expr_fpkm_filtered), col_data_limma$sample_id)
+
+if (length(common_samples) == 0) {
+  stop("No overlapping samples between expression matrix and col_data_limma.")
+}
+
+log_expr_fpkm_filtered <- log_expr_fpkm_filtered[, common_samples, drop = FALSE]
+col_data_limma <- col_data_limma[match(common_samples, col_data_limma$sample_id), , drop = FALSE]
+
+cat("\nNumber of samples used in DE:", ncol(log_expr_fpkm_filtered), "\n")
+
+# Ensure rownames of col_data_limma are sample IDs for model.matrix
+col_data_limma <- as.data.frame(col_data_limma)
+rownames(col_data_limma) <- col_data_limma$sample_id
+
+# Sanity checks for alignment before building design matrix
+cat("\nSanity check – first few sample IDs in expression and col_data_limma:\n")
+print(head(colnames(log_expr_fpkm_filtered)))
+print(head(col_data_limma$sample_id))
+
+cat("\nCondition breakdown after alignment (should match earlier):\n")
+print(table(col_data_limma$condition, useNA = "ifany"))
+
+cat("\nAll column names of expression match rownames of col_data_limma? ",
+    all(colnames(log_expr_fpkm_filtered) == rownames(col_data_limma)), "\n")
+
+use_paired <- !is.null(col_data_limma$patient_id) &&
+  length(unique(col_data_limma$patient_id)) > 1 &&
+  all(table(col_data_limma$patient_id) >= 2)
+
+if (use_paired) {
+  design_limma <- model.matrix(~ patient_id + condition, data = col_data_limma)
+  cat("\nUsing paired design for limma: ~ patient_id + condition\n")
+} else {
+  design_limma <- model.matrix(~ condition, data = col_data_limma)
+  cat("\nUsing unpaired design for limma: ~ condition\n")
+}
+
+cat("Design matrix dimensions (samples x coefficients):\n")
+print(dim(design_limma))
+
+# Final sanity check: rownames of design should match expression columns
+stopifnot(identical(colnames(log_expr_fpkm_filtered), rownames(design_limma)))
+
+colnames(design_limma)
 ```
 
-## 3.2 Run DE and Extract Results
+## 3.2 Run DE with limma and Extract Results
 
-```{r run-de}
-# TODO: run DESeq() or chosen method and extract results
-# dds <- DESeq(dds)
-# res <- results(dds, contrast = c("condition", "tumor", "normal"))
-# summary(res)
+```{r run-de-limma}
+# At this point, columns of log_expr_fpkm_filtered and rows of design_limma
+# are aligned and share the same sample IDs
+
+fit <- lmFit(log_expr_fpkm_filtered, design_limma)
+fit_ebayes <- eBayes(fit)
+
+coef_names <- colnames(design_limma)
+coef_of_interest <- grep("conditiontumor", coef_names, value = TRUE)
+
+if (length(coef_of_interest) != 1) {
+  stop("Could not uniquely identify conditiontumor coefficient in design matrix.")
+}
+
+cat("\nUsing coefficient for DE results:", coef_of_interest, "\n")
+
+res_limma <- topTable(
+  fit_ebayes,
+  coef = coef_of_interest,
+  number = Inf,
+  sort.by = "P"
+)
+
+res_limma_df <- res_limma %>%
+  tibble::rownames_to_column(var = "gene_id")
+
+cat("\nPreview of limma DE results (first 6 rows):\n")
+print(head(res_limma_df))
 ```
 
-## 3.3 Post-processing and Annotation
+## 3.3 Post-processing, Annotation, and Export
 
 ```{r de-postprocess}
-# TODO: apply padj and log2FC thresholds, label up/down/NS genes
-# TODO: optionally annotate genes with symbols/descriptions
+alpha <- 0.05
+logfc_cutoff <- 1
+
+res_limma_df <- res_limma_df %>%
+  dplyr::mutate(
+    regulation = dplyr::case_when(
+      adj.P.Val < alpha & logFC >= logfc_cutoff ~ "up",
+      adj.P.Val < alpha & logFC <= -logfc_cutoff ~ "down",
+      TRUE ~ "ns"
+    )
+  )
+
+cat("\nSummary of regulation categories (up/down/ns):\n")
+print(table(res_limma_df$regulation))
+
+if (!dir.exists("results")) dir.create("results", recursive = TRUE)
+
+readr::write_csv(res_limma_df, file.path("results", "de_results_limma_fpkm.csv"))
+
+cat("\nSaved limma DE results to results/de_results_limma_fpkm.csv\n")
 ```
 
 # 4 Visualization – Volcano and MA Plots (Task 3)
 
+In this section, we visualize the limma differential expression results obtained in Section 3. The volcano and MA plots are based on `res_limma_df`, which contains log2 fold changes (tumor vs normal), adjusted p-values, average log2 expression, and the `regulation` labels defined using the same thresholds (`alpha` and `logfc_cutoff`) as in Task 2. All results are derived from limma models fitted to log2(FPKM + 1) values.
+
 ## 4.1 Volcano Plot
 
 ```{r volcano-plot}
-# TODO: build volcano plot from DE results using ggplot2
-# - x-axis: log2FoldChange
-# - y-axis: -log10(padj or pvalue)
-# - color by regulation (up/down/NS)
+# Visualize limma FPKM-based DE results as a volcano plot using res_limma_df, alpha, and logfc_cutoff from Section 3.3
+stopifnot(exists("res_limma_df"))
+
+volcano_df <- res_limma_df %>%
+  dplyr::mutate(
+    neg_log10_adjP = -log10(adj.P.Val + 1e-300)
+  )
+
+p_volcano <- ggplot(volcano_df, aes(x = logFC, y = neg_log10_adjP, color = regulation)) +
+  geom_point(alpha = 0.6, size = 1) +
+  theme_bw() +
+  geom_vline(xintercept = c(-logfc_cutoff, logfc_cutoff), linetype = "dashed", color = "grey50") +
+  geom_hline(yintercept = -log10(alpha), linetype = "dashed", color = "grey50") +
+  labs(
+    title = "Volcano plot: tumor vs normal (limma on log2(FPKM+1))",
+    x = "log2 fold change (tumor vs normal)",
+    y = "-log10(adj.P.Val)"
+  )
+
+# Optionally label a small set of top significant genes using ggrepel
+if (requireNamespace("ggrepel", quietly = TRUE)) {
+  top_label_df <- volcano_df %>%
+    dplyr::filter(regulation != "ns") %>%
+    dplyr::arrange(adj.P.Val) %>%
+    dplyr::slice_head(n = 20)
+
+  if (nrow(top_label_df) > 0) {
+    p_volcano <- p_volcano +
+      ggrepel::geom_text_repel(
+        data = top_label_df,
+        aes(label = gene_id),
+        size = 2,
+        max.overlaps = 50,
+        box.padding = 0.3,
+        point.padding = 0.2,
+        segment.color = "grey70"
+      )
+  }
+}
+
+print(p_volcano)
+
+# Save volcano plot to figures/
+if (!dir.exists("figures")) dir.create("figures", recursive = TRUE)
+
+ggplot2::ggsave(
+  filename = file.path("figures", "volcano_limma_fpkm_tumor_vs_normal.png"),
+  plot = p_volcano,
+  width = 6,
+  height = 5,
+  dpi = 300
+)
 ```
 
 ## 4.2 MA Plot
 
 ```{r ma-plot}
-# TODO: produce MA plot
-# Option 1: use plotMA(res)
-# Option 2: custom ggplot2 MA plot using baseMean vs log2FoldChange
+
+stopifnot(exists("res_limma_df"))
+
+p_ma <- ggplot(res_limma_df, aes(x = AveExpr, y = logFC, color = regulation)) +
+  geom_point(alpha = 0.6, size = 1) +
+  theme_bw() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  labs(
+    title = "MA plot: tumor vs normal (limma on log2(FPKM+1))",
+    x = "Average log2 expression (AveExpr)",
+    y = "log2 fold change (tumor vs normal)"
+  )
+
+# Optionally label a few highly significant genes in the MA plot
+if (requireNamespace("ggrepel", quietly = TRUE)) {
+  top_ma_df <- res_limma_df %>%
+    dplyr::filter(regulation != "ns") %>%
+    dplyr::arrange(adj.P.Val) %>%
+    dplyr::slice_head(n = 20)
+
+  if (nrow(top_ma_df) > 0) {
+    p_ma <- p_ma +
+      ggrepel::geom_text_repel(
+        data = top_ma_df,
+        aes(label = gene_id),
+        size = 2,
+        max.overlaps = 50,
+        box.padding = 0.3,
+        point.padding = 0.2,
+        segment.color = "grey70"
+      )
+  }
+}
+
+print(p_ma)
+
+# Save MA plot to figures/
+if (!dir.exists("figures")) dir.create("figures", recursive = TRUE)
+
+ggplot2::ggsave(
+  filename = file.path("figures", "ma_limma_fpkm_tumor_vs_normal.png"),
+  plot = p_ma,
+  width = 6,
+  height = 5,
+  dpi = 300
+)
 ```
 
 # 5 Downstream Functional / Pathway Analysis (Task 4)

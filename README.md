@@ -35,31 +35,26 @@ This project uses **renv** for per-project dependency management. After cloning 
 
 ## Data Files
 
-### The Raw Data for DESeq2
-File: [GSE183947_raw_counts_GRCh38.p13_NCBI.tsv](https://www.ncbi.nlm.nih.gov/geo/download/?type=rnaseq_counts&acc=GSE183947&format=file&file=GSE183947_raw_counts_GRCh38.p13_NCBI.tsv.gz)
+**Note (project decision):** During preliminary inspection, the available raw read-count information for this dataset was found to be incomplete and did not provide a single, consistent counts matrix covering all tumor and normal samples. As a result, standard count-based workflows (e.g., DESeq2 on a full raw counts matrix) are not applied here. Instead, this analysis uses the FPKM expression table together with a limma-based approach on log2(FPKM+1) values for the differential expression step, and this limitation is explicitly discussed in the analysis.
 
-- Required for differential expression analysis.
-- Contains raw read counts (integer values) for each gene in each sample.
-- DESeq2 requires raw counts, not normalized data like FPKM/TPM.
+### FPKM Expression Data (used for visualization and limma-based DE)
+File: `GSE183947_fpkm.csv`
 
-### The FPKM Data
-File: [GSE183947_fpkm.csv](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE183947)
-
-- Contains FPKM values (floating point numbers) - normalized for gene length and sequencing depth.
-- FPKM is for visualization/exploration, not statistical testing.
+- Contains FPKM values (floating point numbers) – normalized for gene length and sequencing depth.
+- Used in this project for visualization, exploration, and differential expression using a limma-based approach on log2(FPKM+1).
+- Note: Using normalized expression (FPKM) for differential testing is not ideal. This approach is a pragmatic alternative when a suitable complete raw counts matrix is not available; interpretation should mention this limitation.
 
 ### Sample Metadata
-File: [GSE183947_series_matrix.txt](https://ftp.ncbi.nlm.nih.gov/geo/series/GSE183nnn/GSE183947/matrix/GSE183947_series_matrix.txt.gz)
+File: `GSE183947_series_matrix.txt`
 
 - Contains the sample information (metadata): which samples are cancer vs. normal.
-- This file has both the expression matrix (FPKM values) AND the sample descriptions.
-- Needed for extracting the sample conditions (cancer/normal).
+- This file has the sample descriptions and is used to extract sample condition (cancer/normal) and sample IDs for aligning with the expression matrix.
 
 ### Gene Annotation
-File: [Human.GRCh38.p13.annot.tsv](https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts&file=Human.GRCh38.p13.annot.tsv.gz)
+File: `Human.GRCh38.p13.annot.tsv`
 
 - Contains gene names, symbols, types, etc.
-- Useful for converting Ensembl IDs to gene symbols for interpretation.
+- Useful for converting gene IDs/symbols in the expression table to standardized symbols for interpretation and downstream enrichment analysis.
 
 ## Project Files
 - **Assignment description:** [`task.md`](task/task.md)  

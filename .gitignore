@@ -36,6 +36,7 @@ man/
 *.Rmd.nb.html
 *.nb.html
 analysis.html
+analysis_files/
 
 # Compiled objects
 *.o
