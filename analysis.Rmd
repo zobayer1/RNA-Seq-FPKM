@@ -1,5 +1,5 @@
 ---
-title: "CSE763 Advanced Bioinformatics Assignment Q3 – RNA-Seq FPKM Analysis"
+title: "RNA-Seq FPKM Differential Expression and Pathway Analysis of Breast Tumor vs Normal Tissue (GSE183947)"
 author: "Zobayer Hasan"
 email: "md.zobayer.hasan@g.bracu.ac.bd"
 date: "`r format(Sys.Date(), '%Y-%m-%d')`"
@@ -163,6 +163,73 @@ cat("\nEnriched sample metadata (colData) preview:\n")
 print(col_data)
 ```
 
+## Expression Characteristics and Quality Assessment
+
+```{r}
+log_fpkm <- log2(expr_fpkm + 1)
+
+tumor_samples <- col_data$sample_id[col_data$condition == "tumor"]
+normal_samples <- col_data$sample_id[col_data$condition == "normal"]
+
+overall_stats <- c(
+  mean = mean(log_fpkm),
+  median = median(log_fpkm),
+  sd = sd(log_fpkm),
+  min = min(log_fpkm),
+  max = max(log_fpkm)
+)
+
+tumor_stats <- c(
+  mean = mean(log_fpkm[, tumor_samples]),
+  median = median(log_fpkm[, tumor_samples]),
+  sd = sd(log_fpkm[, tumor_samples]),
+  min = min(log_fpkm[, tumor_samples]),
+  max = max(log_fpkm[, tumor_samples])
+)
+
+normal_stats <- c(
+  mean = mean(log_fpkm[, normal_samples]),
+  median = median(log_fpkm[, normal_samples]),
+  sd = sd(log_fpkm[, normal_samples]),
+  min = min(log_fpkm[, normal_samples]),
+  max = max(log_fpkm[, normal_samples])
+)
+
+# Genes expressed (>1 FPKM in at least one sample)
+genes_expressed_all <- sum(rowSums(expr_fpkm > 1) > 0)
+genes_expressed_tumor <- sum(rowSums(expr_fpkm[, tumor_samples] > 1) > 0)
+genes_expressed_normal <- sum(rowSums(expr_fpkm[, normal_samples] > 1) > 0)
+
+expr_summary_table <- tibble::tibble(
+  Statistic = c("Mean", "Median", "SD", "Min", "Max", "Genes expressed (>1 FPKM)"),
+  Overall   = c(
+    overall_stats["mean"],
+    overall_stats["median"],
+    overall_stats["sd"],
+    overall_stats["min"],
+    overall_stats["max"],
+    genes_expressed_all
+  ),
+  Tumor     = c(
+    tumor_stats["mean"],
+    tumor_stats["median"],
+    tumor_stats["sd"],
+    tumor_stats["min"],
+    tumor_stats["max"],
+    genes_expressed_tumor
+  ),
+  Normal    = c(
+    normal_stats["mean"],
+    normal_stats["median"],
+    normal_stats["sd"],
+    normal_stats["min"],
+    normal_stats["max"],
+    genes_expressed_normal
+  )
+)
+cat("\nExpression Summary\n")
+print(expr_summary_table)
+```
 ## Exploratory Data Analysis (EDA)
 
 ```{r eda}
@@ -471,6 +538,108 @@ if (!dir.exists("results")) dir.create("results", recursive = TRUE)
 readr::write_csv(res_limma_df, file.path("results", "de_results_limma_fpkm.csv"))
 
 cat("\nSaved limma DE results to results/de_results_limma_fpkm.csv\n")
+
+top_up <- res_limma_df %>%
+  filter(regulation == "up") %>%
+  arrange(adj.P.Val) %>%
+  head(10) %>%
+  select(gene_id, logFC, adj.P.Val, AveExpr)
+
+# Get top 10 down-regulated (by adjusted p-value)
+top_down <- res_limma_df %>%
+  filter(regulation == "down") %>%
+  arrange(adj.P.Val) %>%
+  head(10) %>%
+  select(gene_id, logFC, adj.P.Val, AveExpr)
+
+cat("Top 10 UP-regulated genes:\n")
+print(top_up)
+
+cat("\nTop 10 DOWN-regulated genes:\n")
+print(top_down)
+
+sig_genes <- res_limma_df[res_limma_df$regulation != "ns", ]
+
+up_genes <- sig_genes %>% filter(regulation == "up")
+down_genes <- sig_genes %>% filter(regulation == "down")
+
+median_up <- median(up_genes$logFC)
+range_up <- range(up_genes$logFC)
+mean_up <- mean(up_genes$logFC)
+sd_up <- sd(up_genes$logFC)
+
+median_down <- median(down_genes$logFC)
+range_down <- range(down_genes$logFC)
+mean_down <- mean(down_genes$logFC)
+sd_down <- sd(down_genes$logFC)
+
+# Build summary table instead of many cat() calls
+fc_summary <- tibble::tibble(
+  Group = c("Up-regulated", "Down-regulated", "All DE (|log2FC|)"),
+  N = c(nrow(up_genes), nrow(down_genes), nrow(sig_genes)),
+  Mean = c(
+    mean_up,
+    mean_down,
+    mean(abs(sig_genes$logFC))
+  ),
+  Median = c(
+    median_up,
+    median_down,
+    median(abs(sig_genes$logFC))
+  ),
+  SD = c(
+    sd_up,
+    sd_down,
+    sd(abs(sig_genes$logFC))
+  ),
+  Min = c(
+    range_up[1],
+    range_down[1],
+    min(abs(sig_genes$logFC))
+  ),
+  Max = c(
+    range_up[2],
+    range_down[2],
+    max(abs(sig_genes$logFC))
+  )
+) %>%
+  dplyr::mutate(
+    dplyr::across(
+      .cols = c(Mean, Median, SD, Min, Max),
+      .fns = ~round(.x, 2)
+    )
+  )
+
+cat("\nFold Change Summary for Differentially Expressed Genes:\n")
+print(fc_summary)
+
+p_fc_dist <- ggplot(sig_genes, aes(x = logFC, fill = regulation)) +
+  geom_histogram(bins = 50, alpha = 0.7, position = "identity") +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "gray40", linewidth = 0.5) +
+  geom_vline(xintercept = c(median_up, median_down),
+             linetype = "dashed", color = c("red", "blue"), linewidth = 0.5) +
+  theme_bw() +
+  labs(
+    title = "Distribution of log2 fold changes in differentially expressed genes",
+    x = "log2 fold change (tumor vs normal)",
+    y = "Number of genes",
+    fill = "Regulation"
+  ) +
+  scale_fill_manual(
+    values = c("down" = "#377EB8", "up" = "#E41A1C"),
+    labels = c("down" = "Down-regulated (n=881)", "up" = "Up-regulated (n=937)")
+  ) +
+  annotate("text", x = median_up + 0.3, y = 100,
+           label = paste("Median =", round(median_up, 2)),
+           color = "red", hjust = 0, size = 3) +
+  annotate("text", x = median_down - 0.3, y = 100,
+           label = paste("Median =", round(median_down, 2)),
+           color = "blue", hjust = 1, size = 3)
+
+ggsave("figures/fc_distribution.png", p_fc_dist, width = 7, height = 5, dpi = 300)
+cat("\nFold change distribution plot saved to figures/fc_distribution.png\n")
+
+print(p_fc_dist)
 ```
 
 # Visualization – Volcano and MA Plots (Task 3)
@@ -925,9 +1094,70 @@ if (!is.null(gsea_go_bp) && nrow(as.data.frame(gsea_go_bp)) > 0) {
 }
 ```
 
-# Results Summary, Discussion, and Conclusions
+## Methodological Comparison: ORA vs GSEA
 
-## Results Summary
+```{r enrichment-comparison}
+n_up_genes <- length(genes_up_tumor)
+n_down_genes <- length(genes_down_tumor)
+
+n_up_terms <- if (!is.null(go_enrich_up) && nrow(as.data.frame(go_enrich_up)) > 0) {
+  nrow(as.data.frame(go_enrich_up)[as.data.frame(go_enrich_up)$p.adjust < 0.05, ])
+} else {
+  0
+}
+
+n_down_terms <- if (!is.null(go_enrich_down) && nrow(as.data.frame(go_enrich_down)) > 0) {
+  nrow(as.data.frame(go_enrich_down)[as.data.frame(go_enrich_down)$p.adjust < 0.05, ])
+} else {
+  0
+}
+
+example_up_terms <- if (!is.null(go_enrich_up) && nrow(as.data.frame(go_enrich_up)) > 0) {
+  top_up_terms <- head(as.data.frame(go_enrich_up)$Description, 3)
+  paste(top_up_terms, collapse = "\n")
+} else {
+  "No significant terms"
+}
+
+example_down_terms <- if (!is.null(go_enrich_down) && nrow(as.data.frame(go_enrich_down)) > 0) {
+  top_down_terms <- head(as.data.frame(go_enrich_down)$Description, 3)
+  paste(top_down_terms, collapse = "\n")
+} else {
+  "No significant terms"
+}
+
+summary_data <- tibble::tibble(
+  Direction        = c("Up-regulated", "Down-regulated"),
+  Biological_Theme = c(
+    "Cell Cycle & Proliferation",
+    "Tissue Development & Differentiation"
+  ),
+  Example_Terms    = c(example_up_terms, example_down_terms),
+  n_genes          = c(n_up_genes, n_down_genes),
+  n_terms          = c(n_up_terms, n_down_terms)
+)
+
+cat("\nSummary data for enrichment comparison:\n")
+print(summary_data)
+
+p_summary <- ggplot(summary_data, aes(x = Direction, y = n_genes, fill = Biological_Theme)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  geom_text(aes(label = paste("n =", n_genes)), vjust = -0.5) +
+  theme_bw() +
+  labs(title = "Functional Enrichment Summary",
+       x = "Regulation Direction",
+       y = "Number of Genes",
+       fill = "Biological Theme") +
+  scale_fill_manual(values = c("#E41A1C", "#377EB8"))
+
+ggsave("figures/enrichment_summary.png", p_summary, width = 7, height = 5, dpi = 300)
+
+cat("\nEnrichment summary plot saved to figures/enrichment_summary.png\n")
+
+print(p_summary)
+```
+
+# Results Summary
 
 In this analysis we used FPKM-normalized expression values from GSE183947 to compare breast tumor and normal breast tissue using limma on log2(FPKM+1), and then carried out GO Biological Process enrichment, including both over-representation (ORA) and GSEA-style analyses.
 
@@ -937,37 +1167,16 @@ In this analysis we used FPKM-normalized expression values from GSE183947 to com
   - Boxplots and PCA of log2(FPKM+1) showed broadly comparable per-sample distributions and a clear separation of tumor and normal samples.
 
 - **Differential expression (Task 2)**
-  - A limma model on log2(FPKM+1) with tumor vs normal (and patient blocking when possible) produced a ranked list of genes with log2(FC) and FDR-adjusted p-values.
-  - With FDR < 0.05 and |log2(FC)| ≥ 1 we observed sizable sets of both tumor-up and tumor-down genes, indicating extensive transcriptional reprogramming.
+  - A limma model on log2(FPKM+1) with tumor vs normal (and patient blocking when possible) produced a ranked list of genes with log2FC and FDR-adjusted p-values.
+  - With FDR < 0.05 and |log2FC| ≥ 1 we observed sizable sets of both tumor-up and tumor-down genes, indicating extensive transcriptional reprogramming.
   - The complete DE table was saved to `results/de_results_limma_fpkm.csv`.
 
 - **Visualization (Task 3)**
-  - The volcano plot highlighted many genes with large |log2(FC)| and strong statistical support in both directions.
+  - The volcano plot highlighted many genes with large |log2FC| and strong statistical support in both directions.
   - The MA plot showed significant changes across the full range of average expression, without obvious global artifacts at low or high expression.
 
 - **Downstream functional analysis (Task 4)**
   - From the limma results we defined `genes_up_tumor`, `genes_down_tumor`, an all-DE list, and a ranked gene list and exported all lists to `results/`.
   - Mapping symbols to Entrez IDs and running GO BP over-representation (background = all limma-tested genes) yielded coherent process-level signatures for the tumor-up and tumor-down sets.
-  - A complementary GSEA-style GO BP analysis on the ranked gene list identified additional gene sets whose enrichment tracks the full spectrum of log2(FC) and p-values.
+  - A complementary GSEA-style GO BP analysis on the ranked gene list identified additional gene sets whose enrichment tracks the full spectrum of log2FC and p-values.
   - Barplots and dot plots of the top GO BP terms from ORA and GSEA were generated in `figures/`, summarizing the dominant functional themes.
-
-## Discussion
-
-The FPKM-based limma analysis reveals marked gene expression differences between breast tumors and normal breast tissue in GSE183947. At the chosen thresholds (FDR < 0.05, |log2(FC)| ≥ 1) we observe substantial numbers of both up- and down-regulated genes, consistent with broad changes in cellular state rather than a small set of isolated markers.
-
-The volcano and MA plots confirm that these differences are well distributed across expression levels, and together with the PCA suggest a robust separation of tumor and normal samples driven by many independent genes. This supports the use of downstream enrichment to interpret the results at the pathway level.
-
-GO BP enrichment of tumor-up genes points to coordinated activation of proliferative and cell cycle–related programs (for example, terms related to mitotic division, DNA replication, and checkpoint control, depending on the exact output), which is in line with increased growth and genomic instability in tumors. Conversely, GO terms enriched among tumor-down genes tend to involve processes more characteristic of normal or differentiated breast tissue (such as tissue organization, adhesion, or specific signaling pathways), reflecting functions that are attenuated or lost in the tumor state. These process-level trends provide a concise biological summary of the DE results.
-
-The additional GSEA-style analysis corroborates these findings by identifying gene sets with coordinated expression changes that correlate with the overall tumor vs normal differentiation signal. GSEA can capture more subtle and widespread changes in pathway activity that may not be as apparent when looking at individual gene lists.
-
-## Caveats
-
-- All DE results are based on FPKM-normalized values rather than raw counts, and limma on log2(FPKM+1) is used here because a complete counts matrix for all samples is not available; differences relative to count-based DESeq2-style workflows should therefore be expected.
-- GO-based enrichment is sensitive to gene universe choice, ID mapping, and redundancy among related terms, so enriched processes should be interpreted as indicative themes rather than definitive mechanistic pathways.
-
-## Conclusions and Future Work
-
-Using FPKM-normalized RNA-Seq data from GSE183947, we implemented a complete workflow from data loading and QC through limma-based tumor vs normal differential expression, visualization with volcano and MA plots, and GO BP enrichment on tumor-up and tumor-down gene sets. The analysis identifies large, directionally consistent sets of DE genes and highlights biologically plausible process-level changes in breast tumors.
-
-Future work could include repeating the analysis on a unified raw counts matrix with count-based methods, extending enrichment to additional resources such as KEGG, Reactome, or MSigDB, and applying GSEA to the ranked gene list to capture more subtle coordinated shifts in pathway activity. A more detailed report could then link the specific enriched GO terms and pathways to the breast cancer literature.
