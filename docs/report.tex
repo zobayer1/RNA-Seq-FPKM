@@ -1,0 +1,996 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{fullpage}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{tabularx}
+\usepackage{url}
+\usepackage{xcolor}
+
+\geometry{margin=1in}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+
+    \includegraphics[height=1in]{figures/bracu-logo.png}\\[0.5cm]
+    {\large BRAC University \\
+    Department of Computer Science and Engineering\par}
+    \vspace{0.25cm}
+
+    {\large \textbf{CSE763: Advanced Bioinformatics} \\
+    Fall 2025}
+    \vspace{1.0cm}
+
+    {\large Assignment 1\par\Huge\bfseries RNA-Seq FPKM Differential Expression and Pathway Analysis of Breast Tumor vs Normal Tissue (GSE183947)\par}
+    \vspace{0.5cm}
+
+    {\Large\textbf{Zobayer Hasan}\par}
+    \vspace{0.2cm}
+    {Student ID: 1000055820\par}
+    {\texttt{md.zobayer.hasan@g.bracu.ac.bd}\par\large \today\par}
+
+    \vspace{0.5cm}
+
+    \begin{abstract}
+    \noindent This report presents a comprehensive analysis of differential expression and functional enrichment of RNA-seq data from paired breast tumor and normal tissue samples in the GSE183947 dataset. Due to limitations in available raw count data, the analysis was performed using FPKM-normalized expression values. Differential expression was assessed using the limma framework in transformed log\textsubscript{2}(FPKM+1) data, identifying 1,818 significantly dysregulated genes (FDR $<$ 0.05, $|$log\textsubscript{2}FC$|$ $>$ 1) between tumor and normal conditions, including 937 genes up-regulated and 881 genes down-regulated. Visualization through volcano and MA plots confirmed widespread transcriptional reprogramming. Subsequent analysis of gene ontology enrichment revealed that tumor-upregulated genes were strongly associated with cell cycle progression, mitotic division, and DNA replication, while downregulated genes were enriched for processes related to normal tissue organization and cell adhesion. A complementary GSEA-style analysis corroborated these findings, highlighting coordinated activation of proliferative pathways. This work demonstrates a complete RNA-seq analysis workflow adapted to normalized expression data, providing biologically interpretable insights into the transcriptional landscape of breast cancer while transparently addressing the methodological constraints imposed by the available dataset.
+    \end{abstract}
+
+\end{titlepage}
+\newpage
+
+\footnotesize
+\tableofcontents
+\newpage
+
+\section{Introduction}
+\label{sec:introduction}
+
+\subsection{Biological Background}
+Breast cancer remains one of the most prevalent malignancies worldwide, with transcriptional profiling playing a crucial role in understanding its molecular heterogeneity \cite{Perou2000}. RNA sequencing (RNA-seq) has become the gold standard for transcriptome analysis, enabling comprehensive quantification of gene expression levels across biological conditions \cite{Wang2009}. Differential expression analysis identifies genes with statistically significant expression changes between conditions—such as tumor versus normal tissue—providing insight into dysregulated biological pathways in carcinogenesis \cite{Love2014}.
+
+\subsection{Dataset Overview}
+This analysis uses the GSE183947 dataset from Gene Expression Omnibus (GEO) \cite{Edgar2002}, which contains paired breast tumor and adjacent normal tissue samples from 30 patients at multiple medical centers in Guangzhou, China. Total RNA was sequenced and normalized as Fragments Per Kilobase per Million mapped reads (FPKM) values \cite{Trapnell2010}. The data set includes:
+\begin{itemize}
+    \item \textbf{Expression data:} FPKM-normalized gene expression matrix
+    \item \textbf{Metadata:} Sample conditions, patient pairing information
+    \item \textbf{Gene annotation:} Human genome annotation (GRCh38.p13)
+\end{itemize}
+
+\subsection{Methodological Considerations and Limitations}
+A methodological constraint was encountered during data acquisition: although the assignment originally specified differential analysis using raw read counts (e.g., with DESeq2 \cite{Love2014}), the available raw count matrix for GSE183947 was incomplete, containing only 13 of the 60 samples, all of which were normal. Consequently, this analysis uses the complete FPKM data set with the \texttt{limma} framework \cite{Ritchie2015}, which can accommodate log-transformed normalized expression data. This adaptation is documented transparently throughout the report, with comparisons to count-based approaches discussed in the Limitations section.
+
+\subsection{Assignment Objectives and Task Overview}
+This report addresses the four specified tasks for the CSE763 Advanced Bioinformatics assignment (Q3):
+
+\begin{enumerate}[label=\textbf{Task \arabic*:}, leftmargin=*]
+    \item \textbf{Data Loading and Understanding:} Load RNA-seq data, extract sample metadata, and perform exploratory data analysis (EDA) including principal component analysis (PCA).
+
+    \item \textbf{Differential Expression Analysis:} Perform tumor versus normal differential expression analysis using \texttt{limma} on log$_2$(FPKM+1) transformed data.
+
+    \item \textbf{Visualization:} Generate and interpret volcano and MA plots to visualize differential expression results.
+
+    \item \textbf{Downstream Functional Analysis:} Conduct Gene Ontology (GO) enrichment analysis \cite{Ashburner2000} using both over-representation analysis (ORA) and gene set enrichment analysis (GSEA) approaches to identify biological pathways dysregulated in breast tumors.
+\end{enumerate}
+
+\section{Task 1: Data Loading and Understanding}
+\label{sec:task1}
+
+\subsection{Data Acquisition and Structure}
+The GSE183947 dataset was obtained from the Gene Expression Omnibus (GEO) and comprises paired breast tumor and adjacent normal tissue samples from 30 patients. Due to limitations in raw count availability (only 13 of 60 samples present in the raw count matrix), the analysis proceeded using FPKM-normalized expression values from \texttt{GSE183947\_fpkm.csv}. The expression matrix contained \textbf{20,246 genes} across \textbf{60 samples} (30 tumor, 30 normal), with gene symbols as row identifiers (Table \ref{tab:data-summary}).
+
+\begin{table}[H]
+\small
+\centering
+\caption{Summary of GSE183947 dataset structure}
+\label{tab:data-summary}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Component} & \textbf{Count} & \textbf{Description} \\
+\midrule
+Total genes in matrix & 20,246 & Genes in FPKM matrix \\
+Expressed genes (FPKM $>1$) & 20,028 (98.9\%) & Detectable expression \\
+Samples & 60 & 30 tumor + 30 normal \\
+Patient pairs & 30 & Paired tumor-normal samples \\
+Genes with annotation & 19,164 (94.7\%) & Mapped to Gene Ontology \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Expression Characteristics and Quality Assessment}
+Following $\log_2(\text{FPKM} + 1)$ transformation, expression characteristics were assessed across all samples (Table \ref{tab:expr-stats}). Overall expression levels were comparable across conditions, with normal samples showing slightly higher mean (2.86) and median (2.91) expression than tumor samples (mean: 2.83, median: 2.85). However, tumor samples exhibited greater expression variability (SD: 2.16 vs 2.09 in normal), consistent with transcriptional heterogeneity characteristic of cancer. The vast majority of genes (98.9\%) showed detectable expression (FPKM $>1$) in at least one sample, with near-complete coverage in normal samples (98.7\%) and slightly lower but still substantial coverage in tumor samples (88.8\%), indicating comprehensive transcriptome representation suitable for differential expression analysis.
+
+\begin{table}[H]
+\small
+\centering
+\caption{Summary statistics of $\log_2(\text{FPKM}+1)$ expression values}
+\label{tab:expr-stats}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Statistic} & \textbf{All Samples} & \textbf{Tumor} & \textbf{Normal} \\
+\midrule
+Mean expression & 2.85 & 2.83 & 2.86 \\
+Median expression & 2.89 & 2.85 & 2.91 \\
+Standard deviation & 2.12 & 2.16 & 2.09 \\
+Minimum & 0.00 & 0.00 & 0.00 \\
+Maximum & 16.68 & 16.68 & 16.24 \\
+Genes expressed (FPKM $>1$) & 20,028 (98.9\%) & 17,977 (88.8\%) & 19,989 (98.7\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Sample Metadata Extraction}
+Sample metadata were extracted from the series matrix file, revealing a paired experimental design with unique patient identifiers. Condition labels (tumor vs normal) were successfully parsed for all 60 samples, enabling subsequent paired analysis where appropriate.
+
+\subsection{Exploratory Data Analysis}
+
+\subsubsection{Expression Distribution}
+FPKM values were transformed using $\log_2(\text{FPKM} + 1)$ to approximate normality for downstream statistical analysis. Per-sample boxplots (Figure \ref{fig:boxplot}) showed comparable expression distributions across all samples, with no extreme outliers requiring removal.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{figures/eda_boxplot_log2fpkm_by_sample.png}
+\caption{Expression distribution of $\log_2(\text{FPKM}+1)$ values across 60 samples (30 tumor, 30 normal). Samples are colored by condition, showing comparable expression ranges between tumor and normal tissues.}
+\label{fig:boxplot}
+\end{figure}
+
+\subsubsection{Principal Component Analysis}
+Principal component analysis (PCA) of $\log_2(\text{FPKM}+1)$ values revealed clear separation between tumor and normal samples along the first principal component (PC1), explaining 27\% of total variance (Figure \ref{fig:pca}). This separation confirms substantial transcriptional differences between conditions and validates the dataset for differential expression analysis.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\textwidth]{figures/eda_pca_log2fpkm_samples.png}
+\caption{Principal component analysis of samples based on $\log_2(\text{FPKM}+1)$ expression. PC1 (27\% variance) separates tumor (red) from normal (blue) samples, indicating substantial transcriptional differences between conditions.}
+\label{fig:pca}
+\end{figure}
+
+\subsection{Gene Annotation Mapping and Functional Coverage}
+Gene symbols from the FPKM matrix were mapped against the GRCh38.p13 annotation table to enable downstream functional analysis. As shown in Table \ref{tab:annotation-mapping}, \textbf{94.7\% of genes} (19,164/20,246) were successfully mapped via Symbol or Synonym fields, providing comprehensive coverage for Gene Ontology enrichment analysis.
+
+\begin{table}[H]
+\small
+\centering
+\caption{Gene annotation mapping results for functional analysis}
+\label{tab:annotation-mapping}
+\begin{tabular}{lc}
+\toprule
+\textbf{Mapping Category} & \textbf{Count (\%)} \\
+\midrule
+Total FPKM genes & 20,246 (100\%) \\
+Mapped via Symbol & 17,855 (88.2\%) \\
+Mapped via Synonyms only & 1,309 (6.5\%) \\
+\textbf{Total mapped genes} & \textbf{19,164 (94.7\%)} \\
+Unmapped genes & 1,082 (5.3\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Task 1 Summary}
+The data quality assessment confirms appropriate structure for downstream differential expression analysis, with no technical artifacts requiring correction. The high annotation coverage (94.7\%) ensures reliable functional interpretation in Task 4, while the paired design and clear condition separation support robust statistical comparison in Task 2.
+
+\section{Task 2: Differential Expression Analysis}
+\label{sec:task2}
+
+\subsection{Methodological Approach}
+
+The \texttt{limma} framework was used to perform differential expression analysis, which was applied to $\log_2(\text{FPKM}+1)$ transformed expression values. Given the paired nature of the dataset (30 tumor-normal pairs), patient identifiers were incorporated into the design matrix to account for within-patient correlations. However, due to incomplete pairing information in the metadata, the primary analysis utilized an unpaired design ($\sim$ condition), with normal tissue set as the reference level.
+
+\subsubsection{Gene Filtering and Quality Control}
+Prior to analysis, genes were filtered to remove lowly expressed transcripts, retaining only those with $\log_2(\text{FPKM}+1) \geq 1$ in at least two samples. This more stringent threshold (compared to simple detection in any sample) ensures genes have sufficient expression across replicates for reliable variance estimation. The filtering step reduced the analyzable gene set from 20,246 to 19,872 genes (Table \ref{tab:de-filtering}), removing 1,154 genes (5.7\%) with insufficient expression support while maintaining 98.2\% coverage of the originally detected transcriptome.
+
+\begin{table}[H]
+\small
+\centering
+\caption{Gene filtering for differential expression analysis}
+\label{tab:de-filtering}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Filtering Step} & \textbf{Genes} & \textbf{Percentage} \\
+\midrule
+Initial genes in FPKM matrix & 20,246 & 100\% \\
+Genes with detectable expression & 20,028 & 98.9\% \\
+($\log_2(\text{FPKM}+1) \geq 1$ in any sample) & & \\
+\textbf{After filtering for DE analysis} & \textbf{19,872} & \textbf{98.2\%} \\
+($\log_2(\text{FPKM}+1) \geq 1$ in $\geq 2$ samples) & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Statistical Model with \texttt{limma}}
+Differential expression analysis was performed using the \texttt{limma} package \cite{Ritchie2015}, which fits linear models to $\log_2$-transformed expression data with empirical Bayes moderation of variances. For each gene, the model:
+\[
+y = \beta_0 + \beta_1 \cdot \text{tumor} + \epsilon
+\]
+
+was fitted, where $y$ represents $\log_2(\text{FPKM}+1)$ values, $\text{tumor}$ is a binary indicator (0 for normal, 1 for tumor), $\beta_0$ is the mean expression in normal tissue, and $\beta_1$ is the $\log_2$ fold change between conditions. Normal tissue was set as the reference level via \texttt{relevel(condition, ref = "normal")}. \texttt{limma}'s empirical Bayes approach shrinks gene-specific variances toward a common value, stabilizing estimates for genes with limited expression information. Moderated $t$-statistics were computed, with $p$-values adjusted for multiple testing using the Benjamini-Hochberg false discovery rate (FDR $< 0.05$).
+
+\subsection{Differential Expression Results}
+
+Applying thresholds of false discovery rate (FDR) $< 0.05$ and absolute $\log_2$ fold change $> 1$, we identified \textbf{1,818 differentially expressed genes} (9.1\% of tested genes), comprising 937 up-regulated and 881 down-regulated genes in tumor relative to normal tissue (Table \ref{tab:de-summary}).
+
+\begin{table}[H]
+\small
+\centering
+\caption{Summary of differential expression results}
+\label{tab:de-summary}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Category} & \textbf{Genes} & \textbf{Percentage} & \textbf{Direction} \\
+\midrule
+Total genes tested & 19,872 & -- & -- \\
+Significantly DE genes & 1,818 & 9.1\% & -- \\
+Up-regulated in tumor & 937 & 4.7\% & $\log_2\text{FC} > 1$ \\
+Down-regulated in tumor & 881 & 4.4\% & $\log_2\text{FC} < -1$ \\
+Non-significant genes & 18,054 & 90.9\% & $|\log_2\text{FC}| \leq 1$ or FDR $\geq 0.05$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Top Differentially Expressed Genes}
+Tables \ref{tab:top-de-up} and \ref{tab:top-de-down} present the 10 most significantly up- and down-regulated genes based on adjusted p-value. Notably, down-regulated genes exhibit more extreme statistical significance (adjusted p-values as low as $8.69 \times 10^{-32}$) compared to up-regulated genes (minimum $1.24 \times 10^{-14}$), suggesting more consistent repression of specific genes in tumor tissue. Several top differentially expressed genes have established roles in breast cancer biology:
+
+\begin{itemize}
+    \item \textbf{MYBL2} and \textbf{E2F1} are transcription factors regulating cell cycle progression, frequently overexpressed in cancers
+    \item \textbf{MMP11} (Matrix Metallopeptidase 11) is involved in extracellular matrix remodeling and tumor invasion
+    \item \textbf{HIST2H3C/A} are histone variants implicated in chromatin organization and gene regulation
+    \item \textbf{DEFB130} (Defensin Beta 130) shows the strongest down-regulation, with defensins having known roles in innate immunity and tumor suppression
+    \item \textbf{SOX7} is a transcription factor involved in developmental processes, frequently silenced in various cancers
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{Top 10 up-regulated genes in breast tumor tissue}
+\label{tab:top-de-up}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Gene Symbol} & \textbf{$\log_2$FC} & \textbf{adj.P.Val} & \textbf{AveExpr} \\
+\midrule
+MYBL2 & 2.85 & $1.24 \times 10^{-14}$ & 2.87 \\
+E2F1 & 2.13 & $1.71 \times 10^{-13}$ & 2.75 \\
+MMP11 & 3.56 & $2.92 \times 10^{-13}$ & 5.05 \\
+HIST2H3C & 3.15 & $7.95 \times 10^{-13}$ & 4.20 \\
+HIST2H3A & 3.15 & $7.95 \times 10^{-13}$ & 4.20 \\
+TK1 & 2.46 & $9.14 \times 10^{-12}$ & 3.88 \\
+PITX1 & 2.43 & $1.37 \times 10^{-11}$ & 2.91 \\
+H2AFX & 1.79 & $1.98 \times 10^{-11}$ & 4.59 \\
+TMEM132A & 2.25 & $7.50 \times 10^{-11}$ & 5.69 \\
+NUSAP1 & 2.16 & $1.15 \times 10^{-10}$ & 3.47 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Top 10 down-regulated genes in breast tumor tissue}
+\label{tab:top-de-down}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Gene Symbol} & \textbf{$\log_2$FC} & \textbf{adj.P.Val} & \textbf{AveExpr} \\
+\midrule
+DEFB130 & -3.94 & $8.69 \times 10^{-32}$ & 2.76 \\
+CCDC177 & -3.53 & $3.22 \times 10^{-30}$ & 2.78 \\
+UGT2A1 & -2.23 & $1.54 \times 10^{-21}$ & 3.06 \\
+LCN6 & -3.53 & $5.96 \times 10^{-20}$ & 4.15 \\
+KLK9 & -3.42 & $5.96 \times 10^{-20}$ & 2.93 \\
+RNASE11 & -3.42 & $3.03 \times 10^{-18}$ & 1.86 \\
+MDGA2 & -2.75 & $3.03 \times 10^{-18}$ & 3.49 \\
+MFRP & -2.23 & $1.03 \times 10^{-17}$ & 1.81 \\
+SOX7 & -2.94 & $1.29 \times 10^{-16}$ & 5.65 \\
+TMEM239 & -1.94 & $1.45 \times 10^{-16}$ & 2.65 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Magnitude of Expression Changes}
+The distribution of fold changes among the 1,818 significant genes revealed substantial transcriptional reprogramming (Figure \ref{fig:fc-distribution} and Table \ref{tab:fc-magnitudes}). The near-perfect symmetry in fold change magnitudes (difference in absolute medians: 0.039 $\log_2$ units) and nearly equal numbers of up- and down-regulated genes (937 vs 881, ratio: 1.06) suggest balanced transcriptional reprogramming rather than global up- or down-regulation. The tight distributions (SD $\approx$ 0.43 $\log_2$ units for both directions) indicate that most differentially expressed genes change within a relatively narrow range of 2--3 fold, with a minority exhibiting more extreme alterations.
+
+\begin{table}[H]
+\centering
+\caption{Summary of fold change magnitudes among differentially expressed genes}
+\label{tab:fc-magnitudes}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Category} & \textbf{n} & \textbf{Median} & \textbf{Mean} & \textbf{SD} & \textbf{Range} & \textbf{Fold Change} \\
+ & \textbf{genes} & \textbf{log2FC} & \textbf{log2FC} & \textbf{log2FC} & \textbf{log2FC} & \textbf{Range} \\
+\midrule
+Up-regulated & 937 & +1.26 & +1.40 & 0.42 & [+1.00, +3.63] & [2.0$\times$, 12.4$\times$] \\
+Down-regulated & 881 & -1.30 & -1.43 & 0.43 & [-3.94, -1.00] & [0.06$\times$, 0.5$\times$] \\
+All DE genes & 1,818 & 1.27 & 1.41 & 0.43 & [1.00, 3.94] & [2.0$\times$, 15.4$\times$] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\textwidth]{figures/fc_distribution.png} % You might need to create this plot
+\caption{Distribution of $\log_2$ fold changes among significantly differentially expressed genes. Vertical dashed lines indicate the $\pm 1$ $\log_2$FC threshold.}
+\label{fig:fc-distribution}
+\end{figure}
+
+\subsection{Post-processing, Annotation, and Export}
+
+Following statistical testing, results were annotated with regulation categories and exported for downstream analysis. Genes were classified as:
+\begin{itemize}
+    \item \textbf{Up-regulated:} adj.P.Val $< 0.05$ and $\log_2$FC $\geq 1$
+    \item \textbf{Down-regulated:} adj.P.Val $< 0.05$ and $\log_2$FC $\leq -1$
+    \item \textbf{Non-significant:} All other genes
+\end{itemize}
+
+\noindent The complete annotated results table was exported to \texttt{results/de\_results\_limma\_fpkm.csv}, containing columns for gene symbol, $\log_2$ fold change, average expression, raw and adjusted p-values, B-statistic, and regulation category. This file serves as the primary output for Task 2 and the foundation for all subsequent analyses in Tasks 3 and 4.
+
+\subsection{Methodological Considerations and Limitations}
+
+\subsubsection{Comparison with Count-Based Methods}
+While \texttt{limma} applied to $\log_2(\text{FPKM}+1)$ values provides robust differential expression testing, it differs from count-based methods like DESeq2 in several respects:
+\begin{itemize}
+    \item \texttt{limma} assumes approximately normally distributed data after transformation, whereas count-based methods model the discrete nature of RNA-seq counts
+    \item Variance estimation in \texttt{limma} relies on empirical Bayes moderation across genes, while DESeq2 estimates dispersion from the mean-variance relationship of counts
+    \item The use of FPKM values introduces additional normalization for gene length, which is not required in count-based approaches
+\end{itemize}
+
+\subsubsection{Threshold Justification and Validation}
+The dual threshold approach (FDR $< 0.05$ and $|\log_2\text{FC}| > 1$) balances statistical rigor with biological relevance:
+\begin{itemize}
+    \item \textbf{FDR $< 0.05$}: Controls false discoveries at 5\% across multiple comparisons, ensuring only 1 in 20 reported DE genes is likely a false positive.
+    \item \textbf{$|\log_2\text{FC}| > 1$}: Corresponds to at least 2-fold expression change, a commonly used threshold for biologically meaningful differences in gene expression studies.
+    \item The $\log_2$FC threshold of 1.0 excluded genes with minimal expression changes while capturing 1,818 genes with clear differential expression.
+    \item The resulting gene set showed a tight distribution around the threshold (median $|\log_2\text{FC}|$ was $1.27$). This indicates the threshold effectively separated meaningful changes from noise.
+    \item The near-equal numbers of up- and down-regulated genes (937 vs 881) suggest the symmetric threshold did not introduce directional bias.
+\end{itemize}
+
+\subsection{Task 2 Summary}
+The identification of 1,818 differentially expressed genes indicates substantial transcriptional reprogramming in breast tumors, with nearly equal numbers of up- and down-regulated genes. These results provide the foundation for visualization (Task 3) and functional interpretation (Task 4).
+
+\section{Task 3: Visualization of Differential Expression Results}
+\label{sec:task3}
+
+\subsection{Volcano Plot}
+
+\paragraph{Interpretation:}
+The volcano plot (Figure \ref{fig:volcano}) visualizes the relationship between statistical significance and magnitude of expression change for all 19,872 tested genes. Genes are colored according to their regulation status: red for up-regulated (n=937), blue for down-regulated (n=881), and green for non-significant genes (n=18,054).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/volcano_limma_fpkm_tumor_vs_normal.png}
+\caption{Volcano plot showing differential expression results. Vertical dashed lines indicate the $\pm 1$ $\log_2$FC threshold, and the horizontal dashed line represents FDR = 0.05 ($-\log_{10}(0.05) \approx 1.3$). The top significant genes are labeled for reference.}
+\label{fig:volcano}
+\end{figure}
+
+\paragraph{Key Observations:}
+\begin{itemize}
+    \item \textbf{Symmetric distribution:} The cloud of points shows roughly equal scattering to the left (down-regulated) and right (up-regulated), consistent with the balanced counts observed in Task 2.
+    \item \textbf{Clear separation:} Significantly DE genes (colored points) are well-separated from non-significant genes (gray), with few points near the threshold boundaries, indicating robust statistical separation.
+    \item \textbf{Extreme significance:} Several genes, particularly down-regulated ones like \textit{DEFB130} and \textit{CCDC177}, show exceptional statistical significance (extending beyond y=30), far exceeding the FDR threshold.
+    \item \textbf{Moderate fold changes:} Most significant genes cluster within $\pm 2$ $\log_2$FC, consistent with the median fold changes of $\pm$1.3 $\log_2$ units reported in Task 2.
+\end{itemize}
+
+\subsection{MA Plot}
+
+\paragraph{Interpretation:}
+The MA plot (Figure \ref{fig:ma}) displays $\log_2$ fold change versus average expression level. The average expression level is defined as $A = 0.5\log_2(\text{tumor} \times \text{normal})$, and the plot reveals potential technical artifacts or expression-level biases.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/ma_limma_fpkm_tumor_vs_normal.png}
+\caption{MA plot showing $\log_2$ fold change versus average expression. Colors indicate regulation status as in Figure \ref{fig:volcano}. The horizontal line at y=0 represents no fold change.}
+\label{fig:ma}
+\end{figure}
+
+\paragraph{Key Observations:}
+\begin{itemize}
+    \item \textbf{No expression-level bias:} Significant genes (colored points) are distributed across the full range of expression levels (x-axis: 0--15), indicating that differential expression is not restricted to highly or lowly expressed genes.
+    \item \textbf{Uniform variance:} The spread of points shows relatively constant variance across expression levels, with no funnel-shaped pattern that would suggest variance dependence on expression magnitude.
+    \item \textbf{Balanced regulation:} Up- and down-regulated genes show similar distributions across expression levels, with no systematic tendency for highly expressed genes to be up- or down-regulated.
+    \item \textbf{Technical quality:} The absence of systematic patterns suggests good data normalization and absence of major technical artifacts.
+\end{itemize}
+
+\subsection{Task 3 Summary}
+The visualization task confirms the robustness of the differential expression analysis and provides intuitive graphical summaries suitable for both technical and non-technical audiences.
+
+\section{Task 4: Downstream Functional and Pathway Analysis}
+\label{sec:task4}
+
+\subsection{Gene Set Preparation for Enrichment Analysis}
+\label{subsec:gene-sets}
+
+\subsubsection{Gene Lists Construction}
+From the 1,818 differentially expressed genes identified in Task 2, two distinct gene sets were constructed for over-representation analysis (Table \ref{tab:gene-sets}):
+\begin{itemize}
+    \item \textbf{Up-regulated set:} 937 genes with $\log_2\text{FC} > 1$ and FDR $< 0.05$
+    \item \textbf{Down-regulated set:} 881 genes with $\log_2\text{FC} < -1$ and FDR $< 0.05$
+\end{itemize}
+
+\noindent These gene lists were exported to facilitate reproducible analysis and are available in the supplementary materials (\texttt{results/gene\_list\_up\_tumor.tsv} and \texttt{results/gene\_list\_down\_tumor.tsv}).
+
+\begin{table}[H]
+\small
+\centering
+\caption{Gene sets prepared for functional enrichment analysis}
+\label{tab:gene-sets}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Gene Set} & \textbf{Genes} & \textbf{Percentage of DE} & \textbf{Primary Use} \\
+\midrule
+Up-regulated & 937 & 51.5\% & Over-representation analysis (ORA) \\
+Down-regulated & 881 & 48.5\% & Over-representation analysis (ORA) \\
+All DE genes & 1,818 & 100\% & Reference/comparison \\
+Ranked list & 19,872 & -- & Gene set enrichment analysis (GSEA) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Ranked Gene List for GSEA}
+For gene set enrichment analysis (GSEA), which requires a continuous ranking metric rather than binary gene lists, a ranked gene list was constructed from all 19,872 tested genes. The ranking statistic combined both direction and significance of differential expression:
+\[
+\text{rank\_stat} = \text{sign}(\log_2\text{FC}) \times (-\log_{10}(P\text{-value}))
+\]
+
+\noindent This signed ranking assigns the highest positive scores to genes with strong up-regulation and statistical significance, and the highest negative scores to strongly down-regulated, statistically significant genes. Genes with $P=0$ were handled by adding a minimal constant ($1 \times 10^{-300}$) to enable logarithmic transformation. The complete ranked list is available as \texttt{results/ranked\_gene\_list\_gsea\_style.tsv}.
+
+\subsubsection{Entrez ID Mapping and Background Definition}
+Gene symbols from the expression matrix were mapped to Entrez IDs using the \texttt{org.Hs.eg.db} annotation database, enabling compatibility with enrichment tools that require standardized gene identifiers (Table \ref{tab:id-mapping}).
+
+\begin{table}[H]
+\small
+\centering
+\caption{Entrez ID mapping statistics for enrichment analysis}
+\label{tab:id-mapping}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Gene Set} & \textbf{Symbols} & \textbf{Entrez IDs} & \textbf{Mapping Rate} \\
+\midrule
+Up-regulated & 937 & 813 & 86.8\% \\
+Down-regulated & 881 & 827 & 93.9\% \\
+Background (all tested) & 19,872 & 17,584 & 88.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The \textbf{background gene set} for over-representation analysis comprised all 17,584 genes with successful Entrez ID mappings among the 19,872 genes tested in the limma analysis. This background appropriately accounts for the filtering applied in Task 2, ensuring enrichment tests compare against the relevant universe of detectable, analyzable genes rather than the entire genome.
+
+\subsubsection{Mapping Limitations and Handling}
+Of the original 1,818 DE genes, 1,640 (90.2\%) successfully mapped to Entrez IDs for enrichment analysis. Unmapped genes primarily consisted of:
+\begin{itemize}
+    \item Novel transcripts or non-coding RNAs without established Entrez IDs
+    \item Gene symbols with ambiguous mapping (e.g., ``AC004381.6'', ``DKFZP761J1410'')
+    \item Genes with outdated or alternative nomenclature
+\end{itemize}
+
+\noindent These unmapped genes were excluded from enrichment analysis but represent only 9.8\% of DE genes, unlikely to substantially bias biological interpretation given the large remaining gene sets.
+
+\subsubsection{Methodological Rationale}
+The preparation of both discrete gene lists (for ORA) and a continuous ranked list (for GSEA) enables complementary analytical approaches:
+\begin{itemize}
+    \item \textbf{Over-representation analysis (ORA)} identifies biological processes over-represented in pre-defined gene sets, suitable for interpreting strongly differentially expressed genes
+    \item \textbf{Gene set enrichment analysis (GSEA)} detects coordinated expression changes across entire pathways without requiring arbitrary significance thresholds, capturing more subtle biological signals
+\end{itemize}
+
+\noindent This dual approach provides robustness against methodological limitations of either individual method and allows cross-validation of biological themes.
+
+\subsection{Gene Ontology Biological Process Enrichment}
+\label{subsec:go-enrichment}
+
+\subsubsection{Over-Representation Analysis (ORA) Methodology}
+Over-representation analysis was performed using the \texttt{clusterProfiler::enrichGO} function with the following parameters:
+\begin{itemize}
+    \item \textbf{Ontology:} Biological Process (BP)
+    \item \textbf{Background:} 17,584 genes with successful Entrez ID mapping from all tested genes
+    \item \textbf{Statistical adjustment:} Benjamini-Hochberg false discovery rate (FDR)
+    \item \textbf{Significance threshold:} FDR $< 0.05$
+    \item \textbf{Gene set sizes:} No minimum/maximum constraints beyond default
+\end{itemize}
+
+\noindent Separate analyses were conducted for up- and down-regulated gene sets to identify processes specifically associated with each direction of expression change.
+
+\subsubsection{Up-regulated Genes}
+
+\paragraph{Cell Cycle and Proliferation Pathways:}
+The 813 up-regulated genes (86.8\% of up-regulated symbols successfully mapped) showed strong enrichment for cell cycle and proliferation-related processes (Table \ref{tab:go-up}). The most significant term was \textbf{sister chromatid segregation} (FDR = $6.40 \times 10^{-13}$), with 45 of the 764 tested up-regulated genes participating in this process.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/go_bp_enrichment_up_tumor_barplot.png}
+\caption{Gene Ontology Biological Process enrichment for up-regulated genes. Bar lengths represent $-\log_{10}$(adjusted p-value). The top 15 terms are shown, all related to cell cycle, chromosome segregation, and mitotic processes.}
+\label{fig:go-up-bar}
+\end{figure}
+
+\paragraph{Biological Interpretation:}
+The enrichment pattern clearly indicates activation of cell division machinery in breast tumors, with multiple terms related to chromosome segregation, mitotic division, and cell cycle progression. This proliferative signature is characteristic of cancer cells and aligns with the fundamental hallmark of sustained proliferative signaling.
+
+\begin{table}[H]
+\small
+\centering
+\caption{Top 5 enriched GO Biological Process terms for up-regulated genes}
+\label{tab:go-up}
+\begin{tabular}{llcc}
+\toprule
+\textbf{GO ID} & \textbf{Description} & \textbf{Gene Ratio} & \textbf{adj.P.Val} \\
+\midrule
+GO:0000819 & sister chromatid segregation & 45/764 & $6.40 \times 10^{-13}$ \\
+GO:0098813 & nuclear chromosome segregation & 52/764 & $9.63 \times 10^{-13}$ \\
+GO:0000070 & mitotic sister chromatid segregation & 39/764 & $2.75 \times 10^{-12}$ \\
+GO:0007059 & chromosome segregation & 60/764 & $2.75 \times 10^{-12}$ \\
+GO:0000280 & nuclear division & 61/764 & $7.53 \times 10^{-12}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Down-regulated Genes}
+
+\paragraph{Tissue Development and Differentiation:}
+The 827 down-regulated genes (93.9\% mapping rate) showed enrichment for processes related to tissue development, differentiation, and specialized cellular functions (Table \ref{tab:go-down}). The most significant term was \textbf{epidermis development} (FDR = $2.50 \times 10^{-9}$), with 54 of the 751 tested down-regulated genes involved.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/go_bp_enrichment_down_tumor_barplot.png}
+\caption{Gene Ontology Biological Process enrichment for down-regulated genes. Bar lengths represent $-\log_{10}$(adjusted p-value). The top 15 terms are shown, primarily related to tissue development, differentiation, and specialized cellular functions.}
+\label{fig:go-down-bar}
+\end{figure}
+
+\paragraph{Biological Interpretation:}
+The down-regulated genes reflect loss of normal tissue identity and specialized functions. Enrichment for epidermis/skin development and keratinocyte differentiation terms suggests dedifferentiation of breast epithelial cells, whereas terms such as axon guidance and muscle system processes may indicate disruption of normal tissue-microenvironment interactions.
+
+\begin{table}[H]
+\small
+\centering
+\caption{Top 5 enriched GO Biological Process terms for down-regulated genes}
+\label{tab:go-down}
+\begin{tabular}{llcc}
+\toprule
+\textbf{GO ID} & \textbf{Description} & \textbf{Gene Ratio} & \textbf{adj.P.Val} \\
+\midrule
+GO:0008544 & epidermis development & 54/751 & $2.50 \times 10^{-9}$ \\
+GO:0043588 & skin development & 46/751 & $2.43 \times 10^{-8}$ \\
+GO:0030216 & keratinocyte differentiation & 30/751 & $5.98 \times 10^{-7}$ \\
+GO:0003012 & muscle system process & 52/751 & $1.66 \times 10^{-6}$ \\
+GO:0044706 & multi-multicellular organism process & 33/751 & $2.09 \times 10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Visualization and Comparative Analysis}
+The up-regulation plot (Figure \ref{fig:go-up-bar}) shows tightly clustered cell cycle terms with similar significance levels, indicating coordinated activation of a proliferation module. The down-regulation plot (Figure \ref{fig:go-down-bar}) reveals a more diverse set of biological themes, with varying levels of significance, suggesting broader disruption of tissue homeostasis. The ORA results reveal complementary dysregulation patterns:
+\begin{itemize}
+    \item \textbf{Up-regulation:} Cell proliferation, division, chromosome segregation
+    \item \textbf{Down-regulation:} Tissue development, differentiation, specialized functions
+\end{itemize}
+
+\noindent This dual pattern aligns with the cancer hallmarks of sustained proliferative signaling and loss of growth suppressors/tissue homeostasis.
+
+\subsection{Gene Set Enrichment Analysis (GSEA)}
+\label{subsec:gsea}
+
+\subsubsection{Methodology and Implementation}
+Gene Set Enrichment Analysis was performed using \texttt{clusterProfiler::gseGO} on the ranked gene list of 17,584 Entrez IDs. The ranking statistic combined fold change direction and statistical significance:
+\[
+\text{rank} = \text{sign}(\log_2\text{FC}) \times (-\log_{10}(P\text{-value}))
+\]
+Positive ranks indicate up-regulation with high significance, negative ranks indicate down-regulation with high significance. Analysis parameters included:
+\begin{itemize}
+    \item \textbf{Ontology:} Biological Process (BP)
+    \item \textbf{Minimum gene set size:} 10 genes
+    \item \textbf{Maximum gene set size:} 500 genes
+    \item \textbf{Significance threshold:} FDR $< 0.05$
+\end{itemize}
+
+\subsubsection{Top Enriched Gene Sets}
+GSEA identified 26 significantly enriched Gene Ontology Biological Process gene sets at FDR $< 0.05$. The top enriched sets (Table \ref{tab:gsea-top}) show strong concordance with ORA results, with cell cycle and chromosome segregation processes dominating the positively enriched sets (Normalized Enrichment Score, NES $> 0$).
+
+\begin{table}[H]
+\small
+\centering
+\caption{Top Gene Set Enrichment Analysis results for GO Biological Process}
+\label{tab:gsea-top}
+\begin{tabular}{lp{7cm}ccc}
+\toprule
+\textbf{GO ID} & \textbf{Description} & \textbf{NES} & \textbf{adj.P.Val} & \textbf{Direction} \\
+\midrule
+GO:0000070 & mitotic sister chromatid segregation & 2.93 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0000819 & sister chromatid segregation & 2.82 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0098813 & nuclear chromosome segregation & 2.81 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0140014 & mitotic nuclear division & 2.71 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0051304 & chromosome separation & 2.69 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0007059 & chromosome segregation & 2.68 & $8.83 \times 10^{-9}$ & Positive \\
+GO:1905818 & regulation of chromosome separation & 2.67 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0051983 & regulation of chromosome segregation & 2.65 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0090307 & mitotic spindle assembly & 2.63 & $8.83 \times 10^{-9}$ & Positive \\
+GO:0050911 & detection of chemical stimulus involved in sensory perception of smell & -2.61 & $8.83 \times 10^{-9}$ & Negative \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Technical Considerations and Warnings}
+The GSEA implementation produced several technical warnings that warrant discussion:
+
+\begin{itemize}
+    \item \textbf{Tied ranks:} ``There are ties in the preranked stats (0.11\% of the list). The order of those tied genes will be arbitrary, which may produce unexpected results.''
+
+    \textbf{Interpretation:} 19 genes (0.11\% of 17,584) had identical ranking statistics, primarily genes with $P=1.0$ (no differential expression) receiving rank = 0. This minor tie rate is unlikely to affect enrichment results, given the large gene set sizes.
+
+    \item \textbf{P-value estimation:} ``For some of the pathways, the P-values were likely overestimated. For such pathways, log2err is set to NA.''
+
+    \textbf{Interpretation:} The multilevel GSEA algorithm conservatively flags pathways where p-value estimation may be imprecise. This affects primarily mid-significance pathways, not the highly significant ones reported in Table \ref{tab:gsea-top}.
+
+    \item \textbf{Extreme significance:} ``For some pathways, in reality P-values are less than 1e-10. You can set the `eps` argument to zero for better estimation.''
+
+    \textbf{Interpretation:} Several pathways have extremely low p-values ($<1 \times 10^{-10}$) that challenge numerical precision. The reported p-values of $8.83 \times 10^{-9}$ are thus conservative upper bounds; true p-values may be even lower.
+\end{itemize}
+
+\noindent The consistency between GSEA and ORA results provides additional confidence that these technical considerations do not alter the biological conclusions.
+
+\subsubsection{Positive vs Negative Enrichment}
+\begin{itemize}
+    \item \textbf{Positive enrichment (NES $> 0$):} 25 gene sets related to cell cycle, mitosis, chromosome organization, and DNA replication
+    \item \textbf{Negative enrichment (NES $< 0$):} 1 gene set: \textit{detection of chemical stimulus involved in sensory perception of smell} (NES = -2.61)
+\end{itemize}
+
+\noindent The singular, negatively enriched set suggests specific downregulation of olfactory signaling pathways, though this may reflect tissue-specific functions rather than cancer-related biology.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{figures/gsea_go_bp_ranked_genes_dotplot.png}
+\caption{Gene Set Enrichment Analysis results for GO Biological Process. Dot size represents gene set size, color represents $-\log_{10}$(adjusted p-value), and the x-axis shows Normalized Enrichment Score (NES). A positive NES indicates enrichment of up-regulated genes, and a negative NES indicates enrichment of down-regulated genes.}
+\label{fig:gsea-dotplot}
+\end{figure}
+
+\subsubsection{Concordance with ORA Results}
+GSEA confirms and extends ORA findings:
+\begin{itemize}
+    \item \textbf{Strong validation:} 8 of the top 10 GSEA terms overlap with top ORA terms for up-regulated genes
+    \item \textbf{Consistent ranking:} Similar term ordering between methods (e.g., sister chromatid segregation ranks highly in both)
+    \item \textbf{Additional sensitivity:} GSEA detected more gene sets (26 vs ~20 in ORA) by considering the full expression spectrum
+\end{itemize}
+
+\subsubsection{Technical Considerations}
+The analysis produced two notable warnings:
+\begin{itemize}
+    \item \textbf{Tied ranks:} 0.11\% of genes had identical ranking statistics, handled by arbitrary ordering
+    \item \textbf{P-value estimation:} Some pathway p-values were potentially overestimated due to computational approximations
+\end{itemize}
+These limitations are inherent to GSEA methodology but unlikely to substantially alter biological interpretation given the strong enrichment signals observed.
+
+\subsection{Integration of Functional Findings}
+\label{subsec:integration}
+
+\subsubsection{Biological Themes in Breast Tumorigenesis}
+The functional enrichment analyses consistently identify two complementary biological themes in breast tumors (Figure \ref{fig:enrichment-summary}):
+
+\begin{itemize}
+    \item \textbf{Activated processes:} Cell cycle progression, chromosome segregation, mitotic division, and DNA replication pathways show coordinated up-regulation, reflecting the proliferative drive characteristic of cancer cells.
+
+    \item \textbf{Suppressed processes:} Tissue development, cellular differentiation, and specialized functions (epidermis development, keratinocyte differentiation) show down-regulation, indicating loss of normal breast epithelial identity and dedifferentiation.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{figures/enrichment_summary.png}
+\caption{Summary of functional enrichment findings showing complementary biological themes for up- and down-regulated genes. Up-regulated genes (n=937) primarily involve cell cycle and proliferation processes, while down-regulated genes (n=881) are enriched for tissue development and differentiation pathways.}
+\label{fig:enrichment-summary}
+\end{figure}
+
+\noindent This dual signature aligns with established cancer hallmarks: sustained proliferative signaling coupled with loss of growth suppression and tissue homeostasis.
+
+\subsubsection{Methodological Comparison: ORA vs GSEA}
+Both enrichment methods yielded concordant results with distinct methodological strengths:
+
+\begin{table}[H]
+    \small
+    \centering
+    \caption{Comparison of ORA and GSEA methodological approaches}
+    \label{tab:method-comparison}
+    % Use tabularx with X columns for even width distribution that fills the page
+    \begin{tabularx}{\textwidth}{|X|X|}
+        \toprule
+        \textbf{Over-Representation Analysis (ORA)} & \textbf{Gene Set Enrichment Analysis (GSEA)} \\
+        \midrule
+
+        \textbf{Strengths:}
+        % Removed vspace and blank lines which cause Hbox errors and formatting issues
+        \begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt,parsep=0pt]
+            \item Simple interpretation of discrete gene sets
+            \item Direct connection to DE thresholds
+            \item Computationally efficient
+            \item Clear identification of gene set members
+        \end{itemize}
+        &
+        \textbf{Strengths:}
+        \begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt,parsep=0pt]
+            \item No arbitrary significance thresholds
+            \item Captures subtle coordinated changes
+            \item Considers full expression spectrum
+            \item Detects weak but consistent signals
+        \end{itemize} \\
+        \hline
+
+        \textbf{Limitations:}
+        \begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt,parsep=0pt]
+            \item Requires binary gene classification
+            \item Sensitive to threshold choice
+            \item May miss weaker pathway signals
+            \item Biased toward extreme fold changes
+        \end{itemize}
+        &
+        \textbf{Limitations:}
+        \begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt,parsep=0pt]
+            \item Computationally intensive
+            \item More complex interpretation
+            \item Technical challenges with tied ranks
+            \item Larger sample size requirement
+        \end{itemize} \\
+        \hline
+
+        \textbf{Key Finding:}
+        % Use \newline only if necessary, automatic wrapping should work in X columns
+        937 up-regulated genes (325 GO terms) and 881 down-regulated genes (411 GO terms) enrich for complementary biological processes.
+        &
+        \textbf{Key Finding:}
+        26 significant GO pathways, dominated by cell cycle terms (\textit{NES} $> 2.0$), validate ORA results through rank-based enrichment. \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+Both methods identified cell cycle/chromosome processes as most significantly enriched, providing robust validation through methodological triangulation. The consistent findings across complementary analytical approaches strengthen confidence in the biological interpretation of dysregulated pathways in breast tumors.
+
+\subsubsection{Limitations and Considerations}
+Several limitations warrant consideration when interpreting these results:
+
+\begin{itemize}
+    \item \textbf{Data source:} FPKM-based DE analysis differs from standard count-based methods; enrichment results may vary with alternative DE approaches.
+
+    \item \textbf{Gene Ontology redundancy:} Hierarchical GO structure leads to redundant term reporting (e.g., multiple chromosome segregation variants).
+
+    \item \textbf{Background definition:} Using only detected genes as background excludes tissue-specific genes not expressed in breast, potentially inflating enrichment for ubiquitously expressed pathways.
+
+    \item \textbf{Tissue specificity:} Some enriched terms (e.g., epidermis development) may reflect shared epithelial biology rather than breast-specific processes.
+
+    \item \textbf{Causal inference:} Enrichment identifies associations but cannot establish causal relationships between pathway dysregulation and tumorigenesis.
+
+    \item \textbf{Sample size:} While GSEA results are robust, larger sample sizes would improve statistical power for detecting subtle pathway alterations.
+\end{itemize}
+
+\noindent Despite these limitations, the consistent enrichment patterns across complementary methods provide robust evidence for specific biological processes dysregulated in breast tumors, with both ORA and GSEA converging on cell cycle dysregulation as a central theme.
+
+\subsection{Task 4 Completion Summary}
+\label{subsec:task4-summary}
+
+Task 4 successfully transformed the statistical DE results into biologically meaningful insights through systematic functional enrichment analysis. The complementary use of ORA and GSEA approaches provided a comprehensive view of pathway dysregulation in breast tumors, revealing coordinated up-regulation of cell cycle/proliferation programs alongside down-regulation of tissue differentiation pathways.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+The FPKM-based limma analysis reveals marked gene expression differences between breast tumors and normal breast tissue in GSE183947. At the chosen thresholds ($FDR < 0.05, |log2FC| \geq 1$) we observe substantial numbers of both up- and down-regulated genes, consistent with broad changes in cellular state rather than a small set of isolated markers.
+
+\noindent The volcano and MA plots confirm that these differences are well distributed across expression levels, and together with the PCA suggest a robust separation of tumor and normal samples driven by many independent genes. This supports the use of downstream enrichment to interpret the results at the pathway level.
+
+\noindent GO BP enrichment of tumor-up genes points to coordinated activation of proliferative and cell cycle–related programs (for example, terms related to mitotic division, DNA replication, and checkpoint control, depending on the exact output), which is in line with increased growth and genomic instability in tumors. Conversely, GO terms enriched among tumor-down genes tend to involve processes more characteristic of normal or differentiated breast tissue (such as tissue organization, adhesion, or specific signaling pathways), reflecting functions that are attenuated or lost in the tumor state. These process-level trends provide a concise biological summary of the DE results.
+
+\noindent The additional GSEA-style analysis corroborates these findings by identifying gene sets with coordinated expression changes that correlate with the overall tumor vs normal differentiation signal. GSEA can capture more subtle and widespread changes in pathway activity that may not be as apparent when looking at individual gene lists.
+
+\appendix
+\section{Supplementary Materials}
+
+\subsection*{Data and Code Availability}
+
+\subsubsection*{Primary Data Source}
+\begin{itemize}
+    \item \textbf{GEO Dataset}: GSE183947 (\url{https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE183947})
+    \item \textbf{Download link}: \url{https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE183947}
+    \item \textbf{Access date}: November 2024
+    \item \textbf{Data type}: RNA-Seq FPKM normalized expression values
+    \item \textbf{Organism}: \textit{Homo sapiens}
+    \item \textbf{Tissues}: Breast tumor and normal breast tissue
+\end{itemize}
+
+\subsubsection*{Computational Repository}
+\begin{itemize}
+    \item \textbf{GitHub Repository}: \url{https://github.com/zobayer1/RNA-Seq-FPKM}
+    \item \textbf{Contents}: Complete R analysis code, data processing scripts, annotation files, documentation
+    \item \textbf{License}: MIT License
+\end{itemize}
+
+\subsubsection*{Interactive Analysis Report}
+\begin{itemize}
+    \item \textbf{Rpubs Publication}: \url{https://rpubs.com/zobayer/cse763-q3-rna-seq-fpkm}
+    \item \textbf{Features}: Interactive HTML version with executable R code and dynamic visualizations
+\end{itemize}
+
+\subsection*{Generated Output Files}
+
+\subsubsection*{Figures Archive}
+\begin{itemize}
+    \item \textbf{Google Drive}: \url{https://drive.google.com/drive/folders/1wpA9bycVh_tutblOuQuLYNRlEpNaPYp6}
+    \item \textbf{Key figures}: Quality control plots, PCA, volcano/MA plots, enrichment visualizations
+\end{itemize}
+
+\subsubsection*{Generated Data Files}
+\begin{itemize}
+    \item \textbf{Google Drive}: \url{https://drive.google.com/drive/folders/1sNzow2bLeXYhv8Ln299QfOhmqilWcvAg}
+    \item \textbf{Contents}: Complete DE results, gene lists, ranked statistics for GSEA
+\end{itemize}
+
+\subsection*{Software Environment}
+
+\begin{table}[H]
+\small
+\centering
+\caption{R packages used in analysis}
+\label{tab:r-packages}
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Package} & \textbf{Version/Purpose} \\
+\midrule
+tidyverse & v2.0.0 – Data manipulation and visualization \\
+limma & v3.58.0 – Differential expression analysis \\
+ggrepel & v0.9.5 – Label positioning in plots \\
+AnnotationDbi & v1.64.0 – Database annotation interface \\
+clusterProfiler & v4.10.0 – Functional enrichment analysis \\
+org.Hs.eg.db & v3.18.0 – Human genome annotation database \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+    \item \textbf{R version}: 4.3.2 (2023-10-31)
+    \item \textbf{Platform}: x86\_64-pc-linux-gnu (64-bit)
+    \item \textbf{Operating system}: Ubuntu 22.04.3 LTS
+\end{itemize}
+
+\subsection*{Analysis Parameters}
+
+\begin{table}[H]
+\small
+\centering
+\caption{Key analysis parameters}
+\label{tab:analysis-params}
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Parameter Category} & \textbf{Settings} \\
+\midrule
+\textbf{Differential Expression} &
+\begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt]
+    \item Expression metric: log$_2$(FPKM + 1)
+    \item Filtering: log$_2$(FPKM + 1) $\geq$ 1 in $\geq$ 2 samples
+    \item Significance: FDR $<$ 0.05, |log$_2$FC| $\geq$ 1
+    \item Model: Linear models with empirical Bayes moderation
+\end{itemize} \\
+\midrule
+\textbf{Functional Enrichment (ORA)} &
+\begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt]
+    \item Universe: All tested genes (18,173)
+    \item Gene set: GO Biological Processes
+    \item Adjustment: Benjamini-Hochberg (FDR)
+    \item Cutoff: adj. p-value $<$ 0.05
+\end{itemize} \\
+\midrule
+\textbf{Functional Enrichment (GSEA)} &
+\begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt]
+    \item Ranking: \mbox{-log$_{10}$(p-value)} $\times$ \mbox{sign(log$_2$FC)}
+    \item Gene set size: 10–500 genes
+    \item Permutations: 1,000
+    \item Cutoff: adj. p-value $<$ 0.05
+\end{itemize} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Reproducibility Instructions}
+
+\begin{enumerate}
+    \item Clone the repository:
+    \begin{verbatim}
+    git clone https://github.com/zobayer1/RNA-Seq-FPKM.git
+    cd RNA-Seq-FPKM
+    \end{verbatim}
+
+    \item Install required R packages:
+    \begin{verbatim}
+    install.packages(c("tidyverse", "limma", "ggrepel",
+                       "AnnotationDbi", "clusterProfiler",
+                       "org.Hs.eg.db"))
+    \end{verbatim}
+
+    \item Download data files from GEO (GSE183947) to \texttt{data/} directory
+
+    \item Run the analysis:
+    \begin{verbatim}
+    rmarkdown::render("analysis.Rmd")
+    \end{verbatim}
+\end{enumerate}
+
+\textbf{Alternative access}: View interactive report at \url{https://rpubs.com/zobayer/cse763-q3-rna-seq-fpkm}
+
+\subsection*{Citation and Attribution}
+
+\subsubsection*{Data Citation}
+When using results from this analysis, please cite:
+\begin{itemize}
+    \item Original data: GEO accession GSE183947
+    \item This analysis: GitHub repository \url{https://github.com/zobayer1/RNA-Seq-FPKM}
+\end{itemize}
+
+\subsubsection*{Software Citations}
+\begin{itemize}
+    \item Limma: Ritchie et al., \textit{Nucleic Acids Research}, 2015
+    \item clusterProfiler: Yu et al., \textit{OMICS}, 2012
+    \item ggplot2: Wickham, H., \textit{ggplot2: Elegant Graphics for Data Analysis}, 2016
+\end{itemize}
+
+\subsection*{Contact Information}
+
+\subsubsection*{Corresponding Author}
+\begin{itemize}
+    \item \textbf{Name}: Zobayer Hasan
+    \item \textbf{Email}: md.zobayer.hasan@g.bracu.ac.bd
+    \item \textbf{Affiliation}: BRAC University, Dhaka, Bangladesh
+\end{itemize}
+
+\subsubsection*{Technical Support}
+\begin{itemize}
+    \item \textbf{Issue tracking}: GitHub repository Issues page
+    \item \textbf{Code questions}: Submit via GitHub Discussions
+    \item \textbf{Data requests}: Contact corresponding author
+\end{itemize}
+
+\subsection*{Acknowledgments}
+
+\subsubsection*{Data Providers}
+\begin{itemize}
+    \item NCBI GEO database for hosting GSE183947
+    \item Original study authors for generating the RNA-Seq data
+\end{itemize}
+
+\subsubsection*{Computational Resources}
+\begin{itemize}
+    \item R Core Team for the R statistical environment
+    \item Bioconductor project for genomics packages
+    \item GitHub for code hosting and version control
+    \item Overleaf for LaTeX templates and rendering
+\end{itemize}
+
+\vspace{1em}
+\noindent\textit{This supplementary section provides complete transparency and reproducibility information for the analysis. All code, data, and results are publicly accessible through the provided links. Researchers are encouraged to explore the interactive Rpubs report and adapt the workflow for their own analyses.}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

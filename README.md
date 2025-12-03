@@ -75,5 +75,9 @@ File: `Human.GRCh38.p13.annot.tsv`
 - **Main analysis/report:** [`analysis.Rmd`](./analysis.Rmd)  
   R Markdown document implementing the analysis pipeline and generating the report.
 
+## Final Report
+
+Final rendered report: [`cse763_q3_1000055820.pdf`](https://drive.google.com/file/d/1zb4VsUkINcbaEMzeXTqifiCM1CWaj_oj/view?usp=sharing)
+
 ## License
 This repository is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details.
